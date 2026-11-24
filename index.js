@@ -69,22 +69,7 @@ class VerboseLogger {
     this.startIso = new Date().toISOString();
     this.entries = [];
     this.issues = [];
-    this.successes = [];
-  }
-
-  clearIssues() {
-    if (!this.enabled) return;
-    this.issues = [];
-  }
-
-  explainIssue(plainEnglish) {
-    if (!this.enabled) return;
-    this.issues.push(plainEnglish.replace(/```/g, "'''"));
-  }
-
-  explainSuccess(plainEnglish) {
-    if (!this.enabled) return;
-    this.successes.push(plainEnglish.replace(/```/g, "'''"));
+    this.successNote = null;
   }
 
   log(stage, message, data = undefined) {
@@ -95,211 +80,128 @@ class VerboseLogger {
     if (data !== undefined) {
       let serialized;
       try {
-        serialized = typeof data === 'string' ? data : JSON.stringify(data);
+        serialized = typeof data === 'object' ? JSON.stringify(data) : String(data);
       } catch {
-        serialized = String(data);
+        serialized = '[Unserializable data]';
       }
       line += ` | ${serialized}`;
     }
-    line = line.replace(/```/g, "'''");
     this.entries.push(line);
-    console.log(line);
   }
 
-  buildPlainEnglishSummary(targetCommand, totalMs) {
-    if (this.issues.length === 0) {
-      const details = this.successes.length > 0
-        ? this.successes.join(' ')
-        : `/${targetCommand} ran smoothly with zero errors.`;
-      return `✅ **What Happened (Plain English):** Everything worked properly in \`${totalMs}ms\`! ${details}`;
+  explainIssue(text) {
+    if (!this.enabled) return;
+    this.issues.push(text);
+  }
+
+  explainSuccess(text) {
+    if (!this.enabled) return;
+    this.successNote = text;
+  }
+
+  clearIssues() {
+    this.issues = [];
+  }
+
+  renderPlainEnglish() {
+    if (this.issues.length > 0) {
+      return (
+        `⚠️ **What Went Wrong (Plain English):**\n` +
+        this.issues.map((i) => `• ${i}`).join('\n') +
+        `\n\n💡 *Tip: Check the technical trace below for exact server status and response codes.*`
+      );
     }
-
-    const bulletList = this.issues.map((item) => `• ${item}`).join('\n');
-    const silverLining = this.successes.length > 0
-      ? `\n*What still worked:* ${this.successes.join(' ')}`
-      : '';
-    return `⚠️ **What Went Wrong (Plain English):**\n${bulletList}${silverLining}`;
+    if (this.successNote) {
+      return `✅ **What Happened (Plain English):** ${this.successNote}`;
+    }
+    const duration = (performance.now() - this.startTime).toFixed(2);
+    return `✅ **What Happened (Plain English):** Everything worked properly in ${duration}ms! The command completed smoothly with zero errors.`;
   }
 
-  format(maxLength = 1350) {
-    const full = this.entries.join('\n');
-    if (full.length <= maxLength) return full;
-    const headLen = Math.floor(maxLength * 0.45);
-    const tailLen = Math.floor(maxLength * 0.45);
-    const omitted = full.length - (headLen + tailLen);
-    return `${full.slice(0, headLen)}\n... [${omitted} chars omitted] ...\n${full.slice(full.length - tailLen)}`;
+  renderTechnicalTrace(limit = 1800) {
+    let out = this.entries.join('\n');
+    if (out.length > limit) {
+      const omitted = out.length - limit;
+      out = out.slice(0, limit) + `\n... [${omitted} chars omitted to fit Discord payload limit]`;
+    }
+    return out || 'No trace entries captured.';
   }
-}
-
-function recordAffectionVerbose(fromId, toId, logger = null) {
-  const prevTotal = totalAffectionDelivered;
-  const key = `${fromId}->${toId}`;
-  const prevPair = affectionCounts.get(key) || 0;
-  const next = recordAffection(fromId, toId);
-  logger?.log('STATE:AFFECTION', `Updated in-memory affection counters for key "${key}"`, {
-    key,
-    previousPairCount: prevPair,
-    newPairCount: next,
-    previousGlobalTotal: prevTotal,
-    newGlobalTotal: totalAffectionDelivered,
-    totalTrackedPairs: affectionCounts.size
-  });
-  return next;
 }
 
 function pick(category, logger = null) {
-  const list = KAOMOJI[category] || KAOMOJI.cute;
-  const idx = Math.floor(Math.random() * list.length);
-  const chosen = list[idx];
+  const pool = KAOMOJI[category] || KAOMOJI.cute;
+  const chosen = pool[Math.floor(Math.random() * pool.length)];
+  logger?.log('RANDOM:PICK', `Picked kaomoji from pool "${category}"`, { chosen });
   return chosen;
 }
 
-const PASTEL_PINK = 0xff99cc;
-const PASTEL_PURPLE = 0xc792ea;
-const PASTEL_LAVENDER = 0xe0b0ff;
+const PASTEL_PINK = 0xffb7c5;
+const PASTEL_BLUE = 0xbfe3ff;
+const PASTEL_PURPLE = 0xe0bbf7;
+const PASTEL_MINT = 0xbff5db;
 
-// Reliable GIF fetcher with 3-tier fallback (PurrBot Furry -> Nekos.best -> Waifu.pics SFW)
-async function fetchActionGif(action, vibe = 'furry', logger = null) {
-  const purrMap = {
-    snuggle: 'cuddle',
-    hug: 'hug',
-    lick: 'lick',
-    kiss: 'kiss',
-    headpat: 'pat',
-    earscratch: 'pat',
-    boop: 'poke',
-    bite: 'bite',
-    milk: 'feed',
-    bonk: 'slap',
-    blush: 'blush',
-    tailwag: 'tail',
-    purr: 'neko',
-    howl: 'okami'
-  };
+// Multi-tier Species Fetcher
+async function fetchSpeciesMedia(species, logger = null) {
+  const t0 = performance.now();
+  const lower = species.toLowerCase().trim();
 
-  const nekosMap = {
-    snuggle: 'cuddle',
-    hug: 'hug',
-    lick: 'lick',
-    kiss: 'kiss',
-    headpat: 'pat',
-    earscratch: 'pat',
-    boop: 'poke',
-    bite: 'bite',
-    milk: 'feed',
-    bonk: 'bonk',
-    blush: 'blush',
-    tailwag: 'happy',
-    purr: 'neko',
-    howl: 'kitsune'
-  };
-
+  // Tier 1: Waifu.pics
   const waifuMap = {
-    snuggle: 'cuddle',
-    hug: 'hug',
-    lick: 'lick',
-    kiss: 'kiss',
-    headpat: 'pat',
-    earscratch: 'pat',
-    boop: 'poke',
-    bite: 'bite',
-    milk: 'nom',
-    bonk: 'bonk',
-    blush: 'blush',
-    tailwag: 'happy',
-    purr: 'neko',
-    howl: 'awoo'
+    neko: 'neko',
+    kitsune: 'fox_girl',
+    fox: 'fox_girl',
+    waifu: 'waifu',
+    maid: 'maid',
+    bunny: 'waifu',
+    puppy: 'neko'
   };
 
-  if (vibe === 'furry' && purrMap[action]) {
-    const purrUrl = makeUrl('api.purrbot.site', `/v2/img/sfw/${purrMap[action]}/gif`);
+  const waifuTarget = waifuMap[lower] || (['neko', 'kitsune', 'waifu', 'maid'].includes(lower) ? lower : null);
+  if (waifuTarget) {
+    const ep = `https://api.waifu.pics/sfw/${waifuTarget}`;
+    logger?.log('HTTP:REQ', `Tier 1 [Waifu.pics] GET ${ep}`, { species, waifuTarget });
     try {
-      const purrRes = await fetch(purrUrl, { signal: AbortSignal.timeout(5000) });
-      if (purrRes.ok) {
-        const purrData = await purrRes.json();
-        if (purrData?.link && !purrData.error) {
-          return { url: purrData.link, source: 'PurrBot Furry' };
+      const res = await fetch(ep, { signal: AbortSignal.timeout(6000) });
+      const latencyMs = (performance.now() - t0).toFixed(2);
+      logger?.log('HTTP:RES', `Tier 1 [Waifu.pics] HTTP ${res.status} in ${latencyMs}ms`, { ok: res.ok });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.url) {
+          logger?.log('SPECIES:HIT', `Resolved species="${species}" via Waifu.pics`, { url: data.url });
+          return data.url;
         }
       }
     } catch (err) {
-      logger?.log('HTTP:ERR', `PurrBot failed`, { error: err?.message || String(err) });
+      logger?.log('HTTP:ERR', `Tier 1 [Waifu.pics] failed`, { error: err?.message || String(err) });
     }
   }
 
+  // Tier 2: Nekos.best
+  const nbEndpoints = ['neko', 'kitsune', 'waifu', 'husbando'];
+  const nbTarget = nbEndpoints.includes(lower) ? lower : 'neko';
+  const nbUrl = `https://nekos.best/api/v2/${nbTarget}?amount=1`;
+  logger?.log('HTTP:REQ', `Tier 2 [Nekos.best] GET ${nbUrl}`, { species, nbTarget });
+
   try {
-    const endpoint = nekosMap[action] || 'cuddle';
-    const nekosUrl = makeUrl('nekos.best', `/api/v2/${endpoint}`);
-    const res = await fetch(nekosUrl, { signal: AbortSignal.timeout(5000) });
+    const res = await fetch(nbUrl, { signal: AbortSignal.timeout(6000) });
+    const latencyMs = (performance.now() - t0).toFixed(2);
+    logger?.log('HTTP:RES', `Tier 2 [Nekos.best] HTTP ${res.status} in ${latencyMs}ms`, { ok: res.ok });
     if (res.ok) {
-      const data = await res.json();
-      const item = data?.results?.[0];
-      if (item?.url) {
-        return {
-          url: item.url,
-          source: item.anime_name ? `Nekos.best • ${item.anime_name}` : 'Nekos.best SFW'
-        };
-      }
-    }
-  } catch (err) {
-    logger?.log('HTTP:ERR', `Nekos.best failed`, { error: err?.message || String(err) });
-  }
-
-  try {
-    const wEndpoint = waifuMap[action] || 'hug';
-    const waifuUrl = makeUrl('api.waifu.pics', `/sfw/${wEndpoint}`);
-    const wRes = await fetch(waifuUrl, { signal: AbortSignal.timeout(5000) });
-    if (wRes.ok) {
-      const wData = await wRes.json();
-      if (wData?.url) {
-        return { url: wData.url, source: 'Waifu.pics SFW' };
-      }
-    }
-  } catch (err) {
-    logger?.log('HTTP:ERR', `Waifu.pics failed`, { error: err?.message || String(err) });
-  }
-
-  return null;
-}
-
-// Fetch random SFW species image/GIF from PurrBot with Nekos.best fallback
-async function fetchFurrySpecies(species = 'neko', logger = null) {
-  try {
-    const gifUrl = makeUrl('api.purrbot.site', `/v2/img/sfw/${species}/gif`);
-    const res = await fetch(gifUrl, { signal: AbortSignal.timeout(5000) });
-    if (res.ok) {
-      const data = await res.json();
-      if (data?.link && !data.error) return data.link;
-    }
-
-    const imgUrl = makeUrl('api.purrbot.site', `/v2/img/sfw/${species}/img`);
-    const imgRes = await fetch(imgUrl, { signal: AbortSignal.timeout(5000) });
-    if (imgRes.ok) {
-      const imgData = await imgRes.json();
-      if (imgData?.link && !imgData.error) return imgData.link;
-    }
-  } catch (err) {
-    logger?.log('HTTP:ERR', `PurrBot error`, { error: err?.message || String(err) });
-  }
-
-  try {
-    const fallbackEndpoint = ['kitsune', 'okami', 'holo'].includes(species) ? 'kitsune' : 'neko';
-    const nbUrl = makeUrl('nekos.best', `/api/v2/${fallbackEndpoint}`);
-    const nbRes = await fetch(nbUrl, { signal: AbortSignal.timeout(5000) });
-    if (nbRes.ok) {
-      const nbData = await nbRes.json();
+      const nbData = await res.json();
       const url = nbData?.results?.[0]?.url || null;
+      logger?.log('SPECIES:PARSE', `Tier 2 [Nekos.best] payload`, { url });
       if (url) return url;
     }
   } catch (err) {
-    logger?.log('HTTP:ERR', `Nekos.best failed`, { error: err?.message || String(err) });
+    logger?.log('HTTP:ERR', `Tier 2 [Nekos.best] failed`, { error: err?.message || String(err) });
   }
 
+  logger?.log('SPECIES:FAIL', `No media found across all endpoints for species="${species}"`);
   return null;
 }
 
-// PURE, DIRECT e621.net NSFW MEDIA FETCHER
+// Fetch SFW & NSFW media from e621.net Booru API
 async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
-  // Extract all tags, keeping explicit ratings completely untouched
   const cleanedUserTags = rawTags
     .split(/[\s,]+/)
     .map((t) => t.trim().toLowerCase())
@@ -308,32 +210,40 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
   const queryTags = [...cleanedUserTags];
   if (order === 'score') queryTags.push('order:score');
 
-  const headers = {
-    'User-Agent': 'FurryDiscordBot/6.5 (by Loomie on e621; emolarp.fans)',
+  const baseHeaders = {
+    'User-Agent': 'FurryDiscordBot/6.6 (by Loomie on e621; emolarp.fans)',
     'Accept': 'application/json'
   };
 
-  // Only attach Basic Auth if real credentials exist in env
+  let authHeader = null;
   if (process.env.E621_USERNAME && process.env.E621_API_KEY) {
     const token = Buffer.from(`${process.env.E621_USERNAME.trim()}:${process.env.E621_API_KEY.trim()}`).toString('base64');
-    headers['Authorization'] = `Basic ${token}`;
+    authHeader = `Basic ${token}`;
   }
 
   logger?.log('E621:INIT', `Searching e621.net`, {
     rawTags,
     order,
     queryTags,
-    hasAuth: Boolean(headers['Authorization'])
+    hasAuth: Boolean(authHeader)
   });
 
-  // Extract or reconstruct media link from any e621 post record
+  // Extract or reconstruct media link from any e621 post record (supports both modern 2026 'files' and legacy 'file' schemas)
   function extractMedia(p) {
     const post = p?.post || p;
     if (!post || typeof post !== 'object') return null;
     if (post.flags?.deleted) return null;
 
-    const rawExt = (post.file?.ext || post.file_ext || '').replace(/^\./, '').toLowerCase();
-    const md5 = post.file?.md5 || post.md5;
+    // Modern 2026 e621 schema: post.files { meta, original, sample, preview }
+    // Legacy e621 schema: post.file, post.sample, post.preview
+    const files = post.files || {};
+    const meta = files.meta || post.file || {};
+    const orig = files.original || {};
+    const sample = files.sample || post.sample || {};
+    const preview = files.preview || post.preview || {};
+
+    const rawExt = (meta.ext || post.file?.ext || post.file_ext || '').replace(/^\./, '').toLowerCase();
+    const md5 = meta.md5 || post.file?.md5 || post.md5;
 
     const isVideo = ['webm', 'mp4'].includes(rawExt);
 
@@ -354,13 +264,13 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
 
     if (isVideo) {
       // For WebM/MP4 animations, grab sample/preview JPG so Discord renders an image
-      displayUrl = post.sample?.url || sampleCdn || post.preview?.url || previewCdn;
+      displayUrl = sample.jpg || sample.url || sample.webp || sampleCdn || preview.jpg || preview.url || previewCdn;
     } else if (rawExt === 'gif') {
-      // For GIFs, use animated GIF link
-      displayUrl = post.file?.url || directCdn || post.sample?.url;
+      // For GIFs, prefer animated direct URL
+      displayUrl = orig.url || post.file?.url || directCdn || sample.jpg || sample.url;
     } else {
-      // For images, use sample or full-size direct link
-      displayUrl = post.sample?.url || post.file?.url || directCdn || sampleCdn || post.preview?.url || previewCdn;
+      // For images, sample JPG is fast and fits Discord limits; fallback to original URL or CDN
+      displayUrl = sample.jpg || orig.url || post.file?.url || sample.url || directCdn || sampleCdn || preview.jpg || preview.url;
     }
 
     if (!displayUrl || typeof displayUrl !== 'string' || !displayUrl.startsWith('http')) {
@@ -388,79 +298,110 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
     `${makeUrl('e621.net', '/posts.json')}?limit=75&tags=${queryStr}`
   ];
 
-  for (const url of e621Urls) {
-    const t0 = performance.now();
-    logger?.log('HTTP:REQ', `e621.net GET ${url}`);
+  // Try with auth if available; fallback to public headers if auth fails or returns 0 posts
+  const headerVariants = [];
+  if (authHeader) {
+    headerVariants.push({ ...baseHeaders, Authorization: authHeader });
+  }
+  headerVariants.push({ ...baseHeaders });
 
-    try {
-      const res = await fetch(url, {
-        headers,
-        signal: AbortSignal.timeout(8000)
-      });
-      const latencyMs = (performance.now() - t0).toFixed(2);
-      const rawText = await res.text();
+  for (const headers of headerVariants) {
+    for (const url of e621Urls) {
+      const t0 = performance.now();
+      logger?.log('HTTP:REQ', `e621.net GET ${url}`);
 
-      logger?.log('HTTP:RES', `e621.net HTTP ${res.status} in ${latencyMs}ms`);
-
-      if (!res.ok) {
-        logger?.explainIssue(`e621.net returned HTTP ${res.status}.`);
-        continue;
-      }
-
-      let data;
       try {
-        data = JSON.parse(rawText);
-      } catch {
-        logger?.explainIssue(`e621.net returned non-JSON response.`);
-        continue;
+        const res = await fetch(url, {
+          headers,
+          signal: AbortSignal.timeout(8000)
+        });
+        const latencyMs = (performance.now() - t0).toFixed(2);
+        const rawText = await res.text();
+
+        logger?.log('HTTP:RES', `e621.net HTTP ${res.status} in ${latencyMs}ms`);
+
+        if (!res.ok) {
+          logger?.explainIssue(`e621.net returned HTTP ${res.status}.`);
+          continue;
+        }
+
+        let data;
+        try {
+          data = JSON.parse(rawText);
+        } catch {
+          logger?.explainIssue(`e621.net returned non-JSON response.`);
+          continue;
+        }
+
+        // Robust unwrapping of single object or array
+        let postsList = [];
+        if (Array.isArray(data)) {
+          postsList = data;
+        } else if (Array.isArray(data?.posts)) {
+          postsList = data.posts;
+        } else if (data?.post) {
+          postsList = [data.post];
+        } else if (data?.id) {
+          postsList = [data];
+        }
+
+        const validPosts = postsList
+          .map(extractMedia)
+          .filter(Boolean);
+
+        logger?.log('E621:FILTER', `Filtered e621.net results`, {
+          rawCount: postsList.length,
+          validCount: validPosts.length
+        });
+
+        if (validPosts.length === 0) continue;
+
+        // Pick a random post from matching pool
+        const picked = validPosts[Math.floor(Math.random() * validPosts.length)];
+        const chosen = picked.post;
+
+        let artists = [];
+        let species = [];
+
+        if (Array.isArray(chosen.tags)) {
+          // Modern e621 schema: array of tag strings
+          species = chosen.tags.filter((t) => ['dragon', 'canine', 'feline', 'wolf', 'fox', 'scalie', 'lizard', 'otter', 'cat', 'dog', 'neko', 'equine', 'sergal', 'protogen'].includes(t)).slice(0, 4);
+          if (!species.length) species = chosen.tags.slice(0, 3);
+        } else if (chosen.tags && typeof chosen.tags === 'object') {
+          // Legacy e621 schema: tags object
+          artists = (chosen.tags.artist || []).filter((a) => a !== 'conditional_dnp').slice(0, 3);
+          species = (chosen.tags.species || []).slice(0, 4);
+        }
+
+        const artistStr = artists.length
+          ? artists.join(', ')
+          : (chosen.uploader_name || chosen.tag_string_artist || 'Artist unknown');
+
+        const speciesStr = species.length
+          ? species.join(', ')
+          : (chosen.tag_string_species || 'Furry');
+
+        const scoreVal = typeof chosen.stats?.score?.total === 'number'
+          ? chosen.stats.score.total
+          : (typeof chosen.score === 'object' ? (chosen.score?.total ?? 0) : (chosen.score ?? 0));
+
+        logger?.clearIssues();
+        logger?.explainSuccess(`Got post #${chosen.id} (\`.${picked.ext}\`) directly from e621.net in ${latencyMs}ms!`);
+
+        return {
+          id: chosen.id,
+          imageUrl: picked.displayUrl,
+          postUrl: makeUrl('e621.net', `/posts/${chosen.id}`),
+          score: scoreVal,
+          artists: artistStr,
+          species: speciesStr,
+          searchedTags: cleanedUserTags.length ? cleanedUserTags.join(' ') : 'all posts',
+          rating: chosen.rating || 'e'
+        };
+      } catch (err) {
+        logger?.log('HTTP:ERR', `e621 fetch failed`, { error: err?.message || String(err) });
+        logger?.explainIssue(`Connection to e621.net failed (${err?.message || 'network error'}).`);
       }
-
-      // Robust unwrapping of single object or array
-      let postsList = [];
-      if (data?.post) {
-        postsList = [data.post];
-      } else if (data?.id) {
-        postsList = [data];
-      } else if (Array.isArray(data?.posts)) {
-        postsList = data.posts;
-      } else if (Array.isArray(data)) {
-        postsList = data;
-      }
-
-      const validPosts = postsList
-        .map(extractMedia)
-        .filter(Boolean);
-
-      logger?.log('E621:FILTER', `Filtered e621.net results`, {
-        rawCount: postsList.length,
-        validCount: validPosts.length
-      });
-
-      if (validPosts.length === 0) continue;
-
-      // Pick a random post from matching pool
-      const picked = validPosts[Math.floor(Math.random() * validPosts.length)];
-      const chosen = picked.post;
-      const artists = (chosen.tags?.artist || []).filter((a) => a !== 'conditional_dnp').slice(0, 3);
-      const species = (chosen.tags?.species || []).slice(0, 4);
-      const scoreVal = typeof chosen.score === 'object' ? (chosen.score?.total ?? 0) : (chosen.score ?? 0);
-
-      logger?.clearIssues();
-      logger?.explainSuccess(`Got post #${chosen.id} (\`.${picked.ext}\`) directly from e621.net in ${latencyMs}ms!`);
-
-      return {
-        id: chosen.id,
-        imageUrl: picked.displayUrl,
-        postUrl: makeUrl('e621.net', `/posts/${chosen.id}`),
-        score: scoreVal,
-        artists: artists.length ? artists.join(', ') : (chosen.tag_string_artist || 'Unknown'),
-        species: species.length ? species.join(', ') : (chosen.tag_string_species || 'Unspecified'),
-        searchedTags: cleanedUserTags.length ? cleanedUserTags.join(' ') : 'all posts',
-        rating: chosen.rating || 'e'
-      };
-    } catch (err) {
-      logger?.log('HTTP:ERR', `e621 fetch failed`, { error: err?.message || String(err) });
-      logger?.explainIssue(`Connection to e621.net failed (${err?.message || 'network error'}).`);
     }
   }
 
@@ -487,414 +428,93 @@ function buildActionCopy(action, fromId, toId, logger = null) {
     kiss: {
       title: `Sweet Pastel Kiss~ ${pick('affection', logger)}`,
       text: `*blushes softly and paws at the air*\n\n<@${fromId}> gives <@${toId}> the sweetest, softest forehead & cheek kiss!! ${pick('affection', logger)}`,
-      backLabel: 'Kiss Back uwu'
-    },
-    headpat: {
-      title: `Cozy Headpat Delivery~!! ${pick('headpat', logger)}`,
-      text: `*adjusts striped thigh-highs and reaches up on tiptoes*\n\n<@${fromId}> gives <@${toId}> the softest, warmest headpats and gentle paw-boops!! ${pick('headpat', logger)}`,
-      backLabel: 'Headpat Back :3'
-    },
-    earscratch: {
-      title: `Fluffy Ear Scratches~!! ${pick('headpat', logger)}`,
-      text: `*gently scritches right behind the ears until the tail thumps happily*\n\n<@${fromId}> gives <@${toId}> the coziest ear scratches ever!! ${pick('headpat', logger)}`,
-      backLabel: 'Scratch Back ^w^'
+      backLabel: 'Kiss Back >///<'
     },
     boop: {
-      title: `Soft Paw Snoot-Boop~!! ${pick('playful', logger)}`,
-      text: `*reaches out a soft paw pad and gently pokes*\n\n*boop!!* <@${fromId}> boops <@${toId}> right on the nose!! ${pick('playful', logger)}`,
-      backLabel: 'Boop Back >w<'
+      title: `Gentle Nose Boop~!! ${pick('playful', logger)}`,
+      text: `*reaches forward with soft paws and gently presses your nose*\n\n**BOOP!** <@${fromId}> booped <@${toId}> right on their cute snoot!! ${pick('playful', logger)}`,
+      backLabel: 'Boop Back >:3'
+    },
+    headpat: {
+      title: `Warm Gentle Headpats~ ${pick('headpat', logger)}`,
+      text: `*gently reaches up and softly strokes between your ears*\n\n<@${fromId}> gives <@${toId}> the softest, most loving headpats! Good cutie!! ${pick('headpat', logger)}`,
+      backLabel: 'Headpat Back :3'
+    },
+    cuddle: {
+      title: `Sweet Cozy Cuddle~ ${pick('snuggle', logger)}`,
+      text: `*pulls a pastel blanket over both of you, tail resting lightly across your lap*\n\n<@${fromId}> and <@${toId}> are locked in an adorable cuddle session!! ${pick('snuggle', logger)}`,
+      backLabel: 'Cuddle Back ^///^'
     },
     bite: {
-      title: `Playful Love-Nibble~ nom! ${pick('playful', logger)}`,
-      text: `*ears flatten playfully and leans in close*\n\n*nom~!* <@${fromId}> gives <@${toId}> a gentle, playful little catboy nibble!! ${pick('playful', logger)}`,
-      backLabel: 'Nibble Back :3'
+      title: `Playful Soft Nibble~ ${pick('playful', logger)}`,
+      text: `*mischievous toothy grin and twitching fluffy ears*\n\n*nom!* <@${fromId}> gave <@${toId}> a gentle, playful affection nibble!! ${pick('playful', logger)}`,
+      backLabel: 'Nibble Back >:3'
     },
-    milk: {
-      title: `Fresh Cozy Milk Delivery~ uwu ${pick('cute', logger)}`,
-      text: `*paws at the air and slides a frosty glass across the table*\n\n<@${fromId}> shares a sweet glass of milk with <@${toId}> for +100% cozy pastel energy!! ${pick('cute', logger)}`,
-      backLabel: 'Share Back :3'
+    holdhands: {
+      title: `Warm Paw Holding~ ${pick('affection', logger)}`,
+      text: `*shyly reaches out and gently interlocks fingers and soft beans*\n\n<@${fromId}> is holding paws with <@${toId}>! It feels warm and safe... ${pick('affection', logger)}`,
+      backLabel: 'Hold Paws Back :3'
     },
-    bonk: {
-      title: `Playful Paw Bonk~!! >_<`,
-      text: `*bonk!!* <@${fromId}> gives <@${toId}> a soft, playful paw-bonk on the head!! ${pick('playful', logger)}`,
-      backLabel: 'Bonk Back >w<'
+    poke: {
+      title: `Cheeky Paw Poke~ ${pick('playful', logger)}`,
+      text: `*sneaks up on tiptoes and pokes your side with a soft claw*\n\n*poke poke!* <@${fromId}> poked <@${toId}> to get their attention!! ${pick('playful', logger)}`,
+      backLabel: 'Poke Back >w<'
+    },
+    glomp: {
+      title: `High-Velocity Flying Glomp~!! 🐾`,
+      text: `*takes a running start, launching through the air with outstretched paws*\n\n**OOF!** <@${fromId}> completely tackled <@${toId}> with an unstoppable affection dive!! ${pick('playful', logger)}`,
+      backLabel: 'Glomp Back!! >:3'
+    },
+    blush: {
+      title: `Flustered Rosy Cheeks~ ${pick('blush', logger)}`,
+      text: `*hides flushed pink face inside oversized hoodie sleeves*\n\n<@${fromId}> got completely flustered and blushed because of <@${toId}>!! ${pick('blush', logger)}`,
+      backLabel: 'Tease the Cutie :3'
+    },
+    nuzzle: {
+      title: `Warm Whisker & Cheek Nuzzle~ ${pick('snuggle', logger)}`,
+      text: `*leans in close, rubbing soft cheek fur and whiskers against your shoulder*\n\n<@${fromId}> nuzzles against <@${toId}> lovingly... ${pick('snuggle', logger)}`,
+      backLabel: 'Nuzzle Back ^w^'
+    },
+    rawr: {
+      title: `Ferocious Pocket-Size RAWR~!! 🦖`,
+      text: `*fluffs up ears, bares tiny fangs and lets out the cutest little growl*\n\n**RAAAWR!** Means "I love you" in dinosaur language!! <@${fromId}> rawrs loudly at <@${toId}>!! ${pick('playful', logger)}`,
+      backLabel: 'Rawr Back! >:3'
+    },
+    pounce: {
+      title: `Stealthy Playful Pounce~!! 🐾`,
+      text: `*wiggles hind paws, lowers down and leaps gracefully through the air*\n\n*POUNCE!* <@${fromId}> lands softly on <@${toId}>! Caught ya!! ${pick('playful', logger)}`,
+      backLabel: 'Pounce Back ^w^'
+    },
+    groom: {
+      title: `Tender Fur Preening & Groom~ ${pick('cute', logger)}`,
+      text: `*carefully combs through messy tufts of fur with gentle, soft paws*\n\n<@${fromId}> is tidying up and grooming <@${toId}>'s fluffy coat so they look their best!! ${pick('cute', logger)}`,
+      backLabel: 'Preen Back :3'
+    },
+    yeet: {
+      title: `Comedic Orbital Yeet~!! 🚀`,
+      text: `*picks you up effortlessly by your hoodie waistband and spins in a circle*\n\n**YEET!** <@${fromId}> launched <@${toId}> straight into low Earth orbit!! *twinkle in the sky* 🌟`,
+      backLabel: 'Yeet Back >:D'
+    },
+    cry: {
+      title: `Sniffling Puppy Tears... (╥﹏╥)`,
+      text: `*eyes well up with giant teardrops, ears drooping all the way down*\n\n<@${fromId}> is crying softly near <@${toId}>... please comfort them with warm snuggles!`,
+      backLabel: 'Comfort the Cutie (つ´ω`)つ'
+    },
+    slap: {
+      title: `Dramatic Squeaky Paw-Bap~!! 💢`,
+      text: `*puffs out cheeks and delivers a comical squeaky-toy slap to your arm*\n\n*BAP!* <@${fromId}> slapped <@${toId}>!! Don't be naughty!! >_<`,
+      backLabel: 'Bap Back >:('
+    },
+    highfive: {
+      title: `Crisp Fluffy High Five~!! 🐾`,
+      text: `*raises soft paw high into the air with a wide grin*\n\n**CLAP!** <@${fromId}> and <@${toId}> locked in a perfectly crisp high-five!! ${pick('online', logger)}`,
+      backLabel: 'High Five Back! :3'
     }
   };
-  return copyMap[action];
+
+  return copyMap[action] || null;
 }
 
-function buildAssetButtons(avatarUrl, bannerUrl, decoUrl, profileUserId = null) {
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setLabel('View PFP :3')
-      .setStyle(ButtonStyle.Link)
-      .setURL(avatarUrl)
-  );
-  if (bannerUrl) {
-    row.addComponents(
-      new ButtonBuilder()
-        .setLabel('View Banner ^w^')
-        .setStyle(ButtonStyle.Link)
-        .setURL(bannerUrl)
-    );
-  }
-  if (decoUrl) {
-    row.addComponents(
-      new ButtonBuilder()
-        .setLabel('View Decoration uwu')
-        .setStyle(ButtonStyle.Link)
-        .setURL(decoUrl)
-    );
-  }
-  if (profileUserId) {
-    row.addComponents(
-      new ButtonBuilder()
-        .setLabel('Profile :3')
-        .setStyle(ButtonStyle.Link)
-        .setURL(makeUrl('discord.com', `/users/${profileUserId}`))
-    );
-  }
-  return [row];
-}
-
-const addVibeOption = (opt) =>
-  opt
-    .setName('vibe')
-    .setDescription('Pick furry/kemonomimi or anime GIF style! :3')
-    .setRequired(false)
-    .addChoices(
-      { name: 'Furry / Kemonomimi (PurrBot) :3', value: 'furry' },
-      { name: 'Anime (Nekos.best) ^w^', value: 'anime' }
-    );
-
-function makeEverywhere(builder) {
-  return builder
-    .setIntegrationTypes(
-      ApplicationIntegrationType.GuildInstall,
-      ApplicationIntegrationType.UserInstall
-    )
-    .setContexts(
-      InteractionContextType.Guild,
-      InteractionContextType.BotDM,
-      InteractionContextType.PrivateChannel
-    )
-    .toJSON();
-}
-
-function getCommandDefinitions(forEverywhere = true) {
-  const rawBuilders = [
-    new SlashCommandBuilder()
-      .setName('e621')
-      .setDescription('Pull furry NSFW art & GIFs directly from e621.net! :3')
-      .addStringOption((opt) =>
-        opt
-          .setName('tags')
-          .setDescription('Space-separated booru tags (e.g. "dragon", "fox cuddle") :3')
-          .setRequired(false)
-      )
-      .addStringOption((opt) =>
-        opt
-          .setName('order')
-          .setDescription('How to sort results! ^w^')
-          .setRequired(false)
-          .addChoices(
-            { name: 'Newest uwu', value: 'newest' },
-            { name: 'Top Score ^w^', value: 'score' }
-          )
-      ),
-
-    new SlashCommandBuilder()
-      .setName('oc')
-      .setDescription('Meet Loomie’s deer OC & check out Loomie’s profile and website! :3'),
-
-    new SlashCommandBuilder()
-      .setName('furrypic')
-      .setDescription('Get a cute SFW furry / kemonomimi GIF or art card! :3')
-      .addStringOption((opt) =>
-        opt
-          .setName('species')
-          .setDescription('Pick your favorite fluffy vibe! ^w^')
-          .setRequired(false)
-          .addChoices(
-            { name: 'Neko / Catboy :3', value: 'neko' },
-            { name: 'Kitsune / Fox ^w^', value: 'kitsune' },
-            { name: 'Okami / Wolf uwu', value: 'okami' },
-            { name: 'Eevee >w<', value: 'eevee' },
-            { name: 'Holo (Wolf) :3', value: 'holo' }
-          )
-      ),
-
-    new SlashCommandBuilder()
-      .setName('snuggle')
-      .setDescription('Wrap a cutie in cozy snuggles uwu!')
-      .addUserOption((opt) => opt.setName('cutie').setDescription('Who are we snuggling? :3').setRequired(true))
-      .addStringOption(addVibeOption),
-
-    new SlashCommandBuilder()
-      .setName('hug')
-      .setDescription('Give a cutie a big, warm, fluffy hug~ ^w^')
-      .addUserOption((opt) => opt.setName('cutie').setDescription('Who needs a warm hug? :3').setRequired(true))
-      .addStringOption(addVibeOption),
-
-    new SlashCommandBuilder()
-      .setName('lick')
-      .setDescription('Give a cutie a playful lick~ nya!')
-      .addUserOption((opt) => opt.setName('cutie').setDescription('Who gets a playful lick? >w<').setRequired(true))
-      .addStringOption(addVibeOption),
-
-    new SlashCommandBuilder()
-      .setName('kiss')
-      .setDescription('Give a cutie a sweet kiss~ ^w^')
-      .addUserOption((opt) => opt.setName('cutie').setDescription('Who gets a sweet kiss? :3').setRequired(true))
-      .addStringOption(addVibeOption),
-
-    new SlashCommandBuilder()
-      .setName('headpat')
-      .setDescription('Give a cutie cozy headpats and paw boops uwu!')
-      .addUserOption((opt) => opt.setName('cutie').setDescription('Who deserves headpats? :3').setRequired(true))
-      .addStringOption(addVibeOption),
-
-    new SlashCommandBuilder()
-      .setName('earscratch')
-      .setDescription('Scratch behind a cutie’s fluffy ears~ :3')
-      .addUserOption((opt) => opt.setName('cutie').setDescription('Whose fluffy ears are we scratching? ^w^').setRequired(true))
-      .addStringOption(addVibeOption),
-
-    new SlashCommandBuilder()
-      .setName('boop')
-      .setDescription('Boop a cutie right on the snoot with a soft paw~ :3')
-      .addUserOption((opt) => opt.setName('cutie').setDescription('Whose nose are we booping? >w<').setRequired(true))
-      .addStringOption(addVibeOption),
-
-    new SlashCommandBuilder()
-      .setName('bite')
-      .setDescription('Give a cutie a playful love-nibble~ nom!')
-      .addUserOption((opt) => opt.setName('cutie').setDescription('Who gets a gentle nibble? :3').setRequired(true))
-      .addStringOption(addVibeOption),
-
-    new SlashCommandBuilder()
-      .setName('milk')
-      .setDescription('Share a frosty glass of milk with a cutie~ uwu')
-      .addUserOption((opt) => opt.setName('cutie').setDescription('Who gets a glass of milk? :3').setRequired(true))
-      .addStringOption(addVibeOption),
-
-    new SlashCommandBuilder()
-      .setName('bonk')
-      .setDescription('Give a silly cutie a playful paw-bonk~ >_<')
-      .addUserOption((opt) => opt.setName('cutie').setDescription('Who needs a soft bonk? >w<').setRequired(true))
-      .addStringOption(addVibeOption),
-
-    new SlashCommandBuilder()
-      .setName('blush')
-      .setDescription('Get all flustered and red-faced uwu~')
-      .addUserOption((opt) => opt.setName('cutie').setDescription('Optional: who made you blush? >w<').setRequired(false))
-      .addStringOption(addVibeOption),
-
-    new SlashCommandBuilder()
-      .setName('tailwag')
-      .setDescription('Wag your tail happily like an excited puppy/catboy~ :3')
-      .addUserOption((opt) => opt.setName('cutie').setDescription('Optional: who are you wagging your tail at? ^w^').setRequired(false))
-      .addStringOption(addVibeOption),
-
-    new SlashCommandBuilder()
-      .setName('purr')
-      .setDescription('Curl up and purr loudly like a cozy catboy~ prrrr :3')
-      .addUserOption((opt) => opt.setName('cutie').setDescription('Optional: who are you purring for? uwu').setRequired(false)),
-
-    new SlashCommandBuilder()
-      .setName('howl')
-      .setDescription('Let out a cute little wolf/deer awooo~ ^w^')
-      .addUserOption((opt) => opt.setName('cutie').setDescription('Optional: who are you howling with? :3').setRequired(false)),
-
-    new SlashCommandBuilder()
-      .setName('cutemeter')
-      .setDescription('Scan a cutie with the cuteness meter! ^w^')
-      .addUserOption((opt) => opt.setName('cutie').setDescription('Who are we scanning? (defaults to you!)').setRequired(false)),
-
-    new SlashCommandBuilder()
-      .setName('ship')
-      .setDescription('Check compatibility score between two cuties~ :3')
-      .addUserOption((opt) => opt.setName('cutie1').setDescription('First cutie!').setRequired(true))
-      .addUserOption((opt) => opt.setName('cutie2').setDescription('Second cutie!').setRequired(true)),
-
-    new SlashCommandBuilder()
-      .setName('8ball')
-      .setDescription('Ask the pastel catboy crystal ball a yes/no question~ uwu')
-      .addStringOption((opt) => opt.setName('question').setDescription('What do you want to ask? :3').setRequired(true)),
-
-    new SlashCommandBuilder()
-      .setName('lovecount')
-      .setDescription('Check how much affection you have given a cutie~ :3')
-      .addUserOption((opt) => opt.setName('cutie').setDescription('Check affection count for this cutie!').setRequired(true)),
-
-    new SlashCommandBuilder()
-      .setName('avatar')
-      .setDescription('Show a cutie HD PFP, banner & avatar decoration + profile link! uwu')
-      .addStringOption((opt) => opt.setName('user_id').setDescription('Discord User ID or @mention (defaults to you!)').setRequired(false)),
-
-    new SlashCommandBuilder()
-      .setName('stats')
-      .setDescription('Check furry uptime, ping & total affection delivered! :3'),
-
-    new SlashCommandBuilder()
-      .setName('update')
-      .setDescription('Force re-register & sync slash commands to server/global! (Owner only) :3')
-      .addStringOption((opt) =>
-        opt
-          .setName('scope')
-          .setDescription('Choose where to sync: guild (instant!), global, or both! ^w^')
-          .setRequired(false)
-          .addChoices(
-            { name: 'Current Server (Instant! 0s delay) :3', value: 'guild' },
-            { name: 'Global (All Servers & DMs) ^w^', value: 'global' },
-            { name: 'Both (Instant Server + Global) uwu', value: 'both' }
-          )
-      ),
-
-    new SlashCommandBuilder()
-      .setName('log')
-      .setDescription('Run any command and get a fresh plain-English explanation + verbose logs! :3')
-      .addStringOption((opt) =>
-        opt
-          .setName('command')
-          .setDescription('Command & args (e.g. "e621 dragon", "update", "stats") :3')
-          .setRequired(true)
-      )
-      .addStringOption((opt) =>
-        opt
-          .setName('args')
-          .setDescription('Extra arguments (tags, question, @user, species, vibe) :3')
-          .setRequired(false)
-      )
-      .addUserOption((opt) =>
-        opt.setName('cutie').setDescription('Target cutie for actions, cutemeter, lovecount, or ship! :3').setRequired(false)
-      )
-      .addUserOption((opt) =>
-        opt.setName('cutie2').setDescription('Second cutie for /ship compatibility! ^w^').setRequired(false)
-      )
-      .addStringOption(addVibeOption)
-      .addStringOption((opt) =>
-        opt.setName('tags').setDescription('Space-separated booru tags for /e621 :3').setRequired(false)
-      )
-      .addStringOption((opt) =>
-        opt
-          .setName('order')
-          .setDescription('Sort order for /e621 results ^w^')
-          .setRequired(false)
-          .addChoices(
-            { name: 'Newest uwu', value: 'newest' },
-            { name: 'Top Score ^w^', value: 'score' }
-          )
-      )
-      .addStringOption((opt) =>
-        opt
-          .setName('species')
-          .setDescription('Species for /furrypic ^w^')
-          .setRequired(false)
-          .addChoices(
-            { name: 'Neko / Catboy :3', value: 'neko' },
-            { name: 'Kitsune / Fox ^w^', value: 'kitsune' },
-            { name: 'Okami / Wolf uwu', value: 'okami' },
-            { name: 'Eevee >w<', value: 'eevee' },
-            { name: 'Holo (Wolf) :3', value: 'holo' }
-          )
-      )
-      .addStringOption((opt) =>
-        opt.setName('question').setDescription('Yes/no question for /8ball :3').setRequired(false)
-      )
-      .addStringOption((opt) =>
-        opt.setName('user_id').setDescription('Discord User ID or @mention for /avatar :3').setRequired(false)
-      )
-      .addStringOption((opt) =>
-        opt.setName('scope').setDescription('Scope for /update ("guild", "global", or "both") :3').setRequired(false)
-      )
-  ];
-
-  if (forEverywhere) {
-    return rawBuilders.map((b) => makeEverywhere(b));
-  }
-  return rawBuilders.map((b) => b.toJSON());
-}
-
-// Deploy & sync commands
-async function deployCommands({ guildId = null, scope = 'both', logger = null } = {}) {
-  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-  const results = { guildCount: null, globalCount: null };
-
-  logger?.log('DEPLOY:INIT', `Starting slash command synchronization`, { scope, guildId });
-
-  // 1. Instant Guild Sync
-  if ((scope === 'guild' || scope === 'both') && guildId) {
-    try {
-      const guildCommands = getCommandDefinitions(false);
-      const res = await rest.put(Routes.applicationGuildCommands(client.user.id, guildId), {
-        body: guildCommands
-      });
-      results.guildCount = Array.isArray(res) ? res.length : guildCommands.length;
-      logger?.log('DEPLOY:GUILD_OK', `Successfully registered ${results.guildCount} commands to guild "${guildId}"`);
-    } catch (err) {
-      console.error('Failed to register guild commands:', err);
-    }
-  }
-
-  // 2. Global Sync
-  if (scope === 'global' || scope === 'both') {
-    try {
-      const globalCommands = getCommandDefinitions(true);
-      const res = await rest.put(Routes.applicationCommands(client.user.id), {
-        body: globalCommands
-      });
-      results.globalCount = Array.isArray(res) ? res.length : globalCommands.length;
-    } catch (err) {
-      if (err?.message?.includes('integration_types') || err?.code === 50035) {
-        try {
-          const fallback = getCommandDefinitions(false);
-          const res = await rest.put(Routes.applicationCommands(client.user.id), { body: fallback });
-          results.globalCount = Array.isArray(res) ? res.length : fallback.length;
-        } catch (innerErr) {
-          console.error('Failed to register global commands (fallback):', innerErr);
-        }
-      } else {
-        console.error('Failed to register global commands:', err);
-      }
-    }
-  }
-
-  return results;
-}
-
-// Register Slash Commands on startup
-client.once(Events.ClientReady, async () => {
-  console.log(`furry online as ${client.user.tag} for Loomie (${OWNER_ID}) :3`);
-  client.user.setActivity('paws, snuggles & emolarp.fans :3', { type: 3 });
-
-  try {
-    const res = await deployCommands({ scope: 'global' });
-    console.log(`Registered ${res.globalCount ?? 'all'} global slash commands successfully! :3`);
-  } catch (err) {
-    console.error('Initial command deployment failed:', err);
-  }
-});
-
-const TARGET_ACTIONS = ['snuggle', 'hug', 'lick', 'kiss', 'headpat', 'earscratch', 'boop', 'bite', 'milk', 'bonk'];
-const SOLO_ACTIONS = ['blush', 'tailwag', 'purr', 'howl'];
-const ALL_COMMANDS = [
-  'e621',
-  'oc',
-  'furrypic',
-  ...TARGET_ACTIONS,
-  ...SOLO_ACTIONS,
-  'cutemeter',
-  'ship',
-  '8ball',
-  'lovecount',
-  'avatar',
-  'stats',
-  'update',
-  'log'
-];
-
-// Helper to build an e621 embed + Roll Again / View Post buttons
 function buildE621Response(post, rawTags = '', order = 'newest', logger = null) {
   const safeCustomId = `e621:${order}:${rawTags.slice(0, 75)}`;
   const row = new ActionRowBuilder().addComponents(
@@ -972,99 +592,63 @@ async function parseLogCommandInput(interaction, logger) {
     remainder = remainder.slice(0, inlineMultiMatch.index).trim();
   }
 
-  const extractedUserIds = [];
-  const mentionRegex = /<@!?(\d{15,21})>|\b(\d{17,20})\b/g;
-  let m;
-  while ((m = mentionRegex.exec(remainder)) !== null) {
-    extractedUserIds.push(m[1] || m[2]);
-  }
-  const remainderWithoutMentions = remainder.replace(mentionRegex, '').replace(/\s+/g, ' ').trim();
+  let cutieParam = explicitOptions.cutie;
+  let cutie2Param = explicitOptions.cutie2;
 
-  async function resolveUserById(rawId) {
-    const cleanId = rawId.replace(/[<@!>]/g, '').trim();
-    if (!cleanId) return null;
-    try {
-      const u = await client.users.fetch(cleanId);
-      return u;
-    } catch {
-      return null;
-    }
+  if (inlineKv.cutie) {
+    const id = inlineKv.cutie.replace(/[<@!>]/g, '');
+    cutieParam = await client.users.fetch(id).catch(() => null);
+  }
+  if (inlineKv.cutie2) {
+    const id = inlineKv.cutie2.replace(/[<@!>]/g, '');
+    cutie2Param = await client.users.fetch(id).catch(() => null);
   }
 
-  let cutie = explicitOptions.cutie;
-  if (!cutie && inlineKv.cutie) cutie = await resolveUserById(inlineKv.cutie);
-  if (!cutie && extractedUserIds[0]) cutie = await resolveUserById(extractedUserIds[0]);
-
-  let cutie2 = explicitOptions.cutie2;
-  if (!cutie2 && inlineKv.cutie2) cutie2 = await resolveUserById(inlineKv.cutie2);
-  if (!cutie2 && extractedUserIds[1]) cutie2 = await resolveUserById(extractedUserIds[1]);
-
-  let vibe = explicitOptions.vibe || inlineKv.vibe || null;
-  let species = explicitOptions.species || inlineKv.species || null;
-  let order = explicitOptions.order || inlineKv.order || null;
-  let tags = explicitOptions.tags ?? inlineKv.tags ?? null;
-  let question = explicitOptions.question ?? inlineKv.question ?? null;
-  let user_id = explicitOptions.user_id || inlineKv.user_id || extractedUserIds[0] || null;
-  let scope = explicitOptions.scope || inlineKv.scope || null;
-
-  const remTokens = remainderWithoutMentions ? remainderWithoutMentions.split(/\s+/) : [];
-
-  if (targetCommand === 'e621') {
-    const validOrders = ['score', 'newest'];
-    const filteredTagTokens = [];
-    for (const tok of remTokens) {
-      if (!order && validOrders.includes(tok.toLowerCase())) {
-        order = tok.toLowerCase();
-      } else if (tok.toLowerCase() !== 'random') {
-        filteredTagTokens.push(tok);
-      }
-    }
-    if (tags === null) {
-      tags = filteredTagTokens.join(' ');
-    }
-    if (!tags && lastE621Query.tags) {
-      tags = lastE621Query.tags;
-      if (!order) order = lastE621Query.order;
-    }
-  } else if (targetCommand === 'furrypic') {
-    const validSpecies = ['neko', 'kitsune', 'okami', 'eevee', 'holo'];
-    if (!species && remTokens.length > 0 && validSpecies.includes(remTokens[0].toLowerCase())) {
-      species = remTokens[0].toLowerCase();
-    }
-  } else if (TARGET_ACTIONS.includes(targetCommand) || SOLO_ACTIONS.includes(targetCommand)) {
-    const validVibes = ['furry', 'anime'];
-    for (const tok of remTokens) {
-      if (!vibe && validVibes.includes(tok.toLowerCase())) {
-        vibe = tok.toLowerCase();
-      }
-    }
-  } else if (targetCommand === '8ball') {
-    if (!question && remainder) question = remainder;
-  } else if (targetCommand === 'avatar') {
-    if (!user_id && remTokens[0]) user_id = remTokens[0];
-  } else if (targetCommand === 'update') {
-    if (!scope && remTokens[0]) {
-      const s = remTokens[0].toLowerCase();
-      if (['guild', 'global', 'both'].includes(s)) scope = s;
-    }
+  const mentionIds = [...remainder.matchAll(/<@!?(\d+)>/g)].map((m) => m[1]);
+  if (!cutieParam && mentionIds.length > 0) {
+    cutieParam = await client.users.fetch(mentionIds[0]).catch(() => null);
+  }
+  if (!cutie2Param && mentionIds.length > 1) {
+    cutie2Param = await client.users.fetch(mentionIds[1]).catch(() => null);
   }
 
-  const resolvedParams = {
-    cutie,
-    cutie2,
-    vibe: vibe || 'furry',
-    tags: tags || '',
-    order: order || 'newest',
-    species: species || 'neko',
-    question,
-    user_id,
-    scope: scope || 'both'
+  remainder = remainder.replace(/<@!?\d+>/g, '').trim();
+
+  let tagsParam = explicitOptions.tags || inlineKv.tags || '';
+  if (!tagsParam && targetCommand === 'e621' && remainder) {
+    tagsParam = remainder;
+  }
+
+  let questionParam = explicitOptions.question || inlineKv.question || '';
+  if (!questionParam && targetCommand === '8ball' && remainder) {
+    questionParam = remainder;
+  }
+
+  const finalParams = {
+    cutie: cutieParam || (targetCommand !== 'avatar' ? interaction.user : null),
+    cutie2: cutie2Param || null,
+    vibe: explicitOptions.vibe || inlineKv.vibe || 'furry',
+    tags: tagsParam,
+    order: explicitOptions.order || inlineKv.order || 'newest',
+    species: explicitOptions.species || inlineKv.species || (targetCommand === 'species' && remainder ? remainder : 'neko'),
+    question: questionParam || 'Will today be super cute?',
+    user_id: explicitOptions.user_id || inlineKv.user_id || null,
+    scope: explicitOptions.scope || inlineKv.scope || 'both'
   };
 
-  return { targetCommand, params: resolvedParams };
+  logger.log('PARSER:OUTPUT', `Resolved target command "${targetCommand}"`, {
+    targetCommand,
+    finalParams: {
+      ...finalParams,
+      cutie: finalParams.cutie ? `${finalParams.cutie.tag} (${finalParams.cutie.id})` : null,
+      cutie2: finalParams.cutie2 ? `${finalParams.cutie2.tag} (${finalParams.cutie2.id})` : null
+    }
+  });
+
+  return { targetCommand, finalParams };
 }
 
-// Unified command execution engine
+// Master Command Router
 async function executeBotCommand(commandName, params, interaction, logger = null) {
   logger?.log('EXEC:ENTER', `Entering handler for command "/${commandName}"`, {
     invokerId: interaction.user.id,
@@ -1121,311 +705,524 @@ async function executeBotCommand(commandName, params, interaction, logger = null
       { name: 'Server Commands', value: interaction.guildId ? `\`${deployRes.guildCount ?? 'Unchanged'}\` (Instant Sync!)` : 'N/A (DM)', inline: true },
       { name: 'Gateway Ping', value: `\`${client.ws.ping}ms\``, inline: true },
       { name: 'e621.net Check', value: e621Status, inline: true },
-      { name: 'Total Commands', value: `\`${ALL_COMMANDS.length}\` registered`, inline: true }
+      { name: 'Total Commands', value: `\`${ALL_COMMANDS.length}\` registered`, inline: true },
+      { name: 'Website', value: `[emolarp.fans](${SITE_URL})`, inline: true }
     ];
 
+    logger?.explainSuccess(`Commands redeployed successfully! Guild commands synced immediately without cache delay.`);
+
     return {
       embeds: [{
-        title: `Bot & Commands Synchronized~ ${pick('online', logger)}`,
-        description:
-          `*ears perk up and tail wags proudly!* Successfully updated and re-registered slash commands!\n\n` +
-          `• **Instant Refresh:** In this server, commands updated **immediately**.\n` +
-          `• **Client Cache:** If you don't see changes in Discord right away, press \`Ctrl + R\` on Desktop or restart mobile Discord to refresh cached slash commands :3\n` +
-          `• [emolarp.fans](${SITE_URL}) ^w^`,
-        color: PASTEL_PINK,
+        title: `⚡ Command Cache Force-Synchronized! ${pick('online', logger)}`,
+        description: `All slash commands have been re-registered directly with Discord API! If commands still don't show up in your Discord client, restart Discord (Ctrl+R) to refresh your client's UI cache. :3`,
+        color: PASTEL_MINT,
         fields,
-        footer: { text: `furry bot v6.5 • update requested by Loomie :3` }
+        footer: { text: `Triggered by Loomie (${OWNER_ID}) • ${new Date().toLocaleTimeString()}` }
       }]
     };
   }
 
-  // /furrypic
-  if (commandName === 'furrypic') {
-    const species = params.species || 'neko';
-    const labelMap = {
-      neko: 'Neko / Catboy',
-      kitsune: 'Kitsune / Fox',
-      okami: 'Okami / Wolf',
-      eevee: 'Eevee',
-      holo: 'Wolf Girl'
-    };
-    const mediaUrl = await fetchFurrySpecies(species, logger);
+  // /log — Verbose execution trace & plain English explanations
+  if (commandName === 'log') {
+    const { targetCommand, finalParams } = await parseLogCommandInput(interaction, logger);
 
-    return {
-      embeds: [{
-        title: `Random ${labelMap[species] || 'Furry'} Cutie~ ${pick('cute', logger)}`,
-        description: `*ears perk up and tail wags happily!* Here is a fresh SFW **${labelMap[species] || species}** card for you, uwu~ ${pick('online', logger)} • [emolarp.fans](${SITE_URL})`,
-        color: PASTEL_PINK,
-        image: mediaUrl ? { url: mediaUrl } : undefined,
-        footer: { text: 'PurrBot SFW • paws & thigh-highs certified :3' }
-      }]
+    if (!targetCommand) {
+      return {
+        content: `Awr~ Please specify a command to test, like \`/log command: e621 args: dragon\` or \`/log command: ping\`! >_<`
+      };
+    }
+
+    logger.log('LOG:START', `Running nested execution for command "/${targetCommand}"`, { finalParams });
+    const payload = await executeBotCommand(targetCommand, finalParams, interaction, logger);
+
+    const technicalTrace = logger.renderTechnicalTrace(1500);
+    const plainEnglish = logger.renderPlainEnglish();
+
+    const traceEmbed = {
+      title: `📋 Technical Trace (\`/${targetCommand}\` • ${logger.entries.length} events)`,
+      description: `\`\`\`log\n${technicalTrace}\n\`\`\``,
+      color: logger.issues.length ? 0xff6b81 : PASTEL_BLUE,
+      footer: { text: `Trace duration: ${(performance.now() - logger.startTime).toFixed(2)}ms` }
     };
+
+    const outPayload = { ...payload };
+
+    if (outPayload.embeds && Array.isArray(outPayload.embeds)) {
+      outPayload.embeds = [...outPayload.embeds, traceEmbed];
+    } else {
+      outPayload.embeds = [traceEmbed];
+    }
+
+    const plainEnglishBlock = `${plainEnglish}\n\n`;
+    if (outPayload.content) {
+      outPayload.content = `${outPayload.content}\n\n${plainEnglishBlock}`;
+    } else {
+      outPayload.content = plainEnglishBlock;
+    }
+
+    return outPayload;
   }
 
-  // /oc
-  if (commandName === 'oc') {
-    const loomieUser = await client.users.fetch(OWNER_ID, { force: true }).catch(() => interaction.user);
+  // Roleplay Actions (/snuggle, /hug, etc.)
+  const actionData = buildActionCopy(commandName, interaction.user.id, params.cutie?.id || interaction.user.id, logger);
+  if (actionData) {
+    const fromId = interaction.user.id;
+    const toId = params.cutie?.id || interaction.user.id;
+    const count = recordAffection(fromId, toId);
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setLabel("Loomie's Profile :3")
-        .setStyle(ButtonStyle.Link)
-        .setURL(makeUrl('discord.com', `/users/${OWNER_ID}`)),
-      new ButtonBuilder()
-        .setLabel('emolarp.fans ^w^')
-        .setStyle(ButtonStyle.Link)
-        .setURL(SITE_URL)
+        .setCustomId(`act:${commandName}:${fromId}`)
+        .setLabel(actionData.backLabel)
+        .setStyle(ButtonStyle.Primary)
     );
 
     return {
       embeds: [{
-        title: `Loomie's Deer OC Showcase~ ${pick('cute', logger)}`,
+        title: actionData.title,
         description:
-          `*ears perk up and tail wags happily!* Meet **Loomie** (<@${OWNER_ID}>)'s adorable deer kemonomimi/anthro OC! ${pick('online', logger)}\n\n` +
-          `• **Species:** Cozy Deer Kemonomimi / Anthro\n` +
-          `• **Signature Fit:** Oversized pastel hoodie, striped thigh-highs, chokers & fluffy animated tail~\n` +
-          `• **Website:** [emolarp.fans](${SITE_URL}) :3`,
+          `${actionData.text}\n\n` +
+          `💖 **Total Affection Count:** \`${count}\` times between you two! (Overall delivered: \`${totalAffectionDelivered}\`)\n` +
+          `• [emolarp.fans](${SITE_URL}) :3`,
         color: PASTEL_PINK,
-        thumbnail: { url: loomieUser.displayAvatarURL({ size: 256 }) },
-        image: OC_IMAGE_URL ? { url: OC_IMAGE_URL } : undefined,
-        footer: { text: `Made with love for Loomie • paws & thigh-highs certified ${pick('cute', logger)}` }
+        footer: { text: `emolarp.fans • paws & affection certified :3` }
       }],
       components: [row]
     };
   }
 
-  // Target Actions
-  if (TARGET_ACTIONS.includes(commandName)) {
-    const action = commandName;
-    let cutie = params.cutie || interaction.user;
-    const vibe = params.vibe || 'furry';
+  // /species
+  if (commandName === 'species') {
+    const chosen = params.species || 'neko';
+    const mediaUrl = await fetchSpeciesMedia(chosen, logger);
 
-    const gif = await fetchActionGif(action, vibe, logger);
-    const count = recordAffectionVerbose(interaction.user.id, cutie.id, logger);
-    const chosen = buildActionCopy(action, interaction.user.id, cutie.id, logger);
-
-    const backCustomId = `back:${action}:${interaction.user.id}:${cutie.id}:${vibe}`;
-    const backBtn = new ButtonBuilder()
-      .setCustomId(backCustomId)
-      .setLabel(chosen.backLabel)
-      .setStyle(ButtonStyle.Secondary);
-
-    const row = new ActionRowBuilder().addComponents(backBtn);
-
-    return {
-      embeds: [{
-        title: chosen.title,
-        description: `${chosen.text}\n\n*Combo with <@${cutie.id}>: **${count}** time${count === 1 ? '' : 's'}! ^w^* • [emolarp.fans](${SITE_URL})`,
-        color: PASTEL_PINK,
-        thumbnail: { url: cutie.displayAvatarURL({ size: 256 }) },
-        image: gif?.url ? { url: gif.url } : undefined,
-        footer: {
-          text: gif?.source
-            ? `${gif.source} • paws & thigh-highs certified :3`
-            : 'paws & thigh-highs certified uwu :3'
-        }
-      }],
-      components: [row]
+    const embed = {
+      title: `Species Transform: ${chosen.toUpperCase()}~ ${pick('cute', logger)}`,
+      description:
+        `*ears wiggle and tail twitches softly!*\n\n` +
+        `<@${interaction.user.id}> is vibing as an adorable **${chosen}**!! ${pick('snuggle', logger)}\n\n` +
+        `• [emolarp.fans](${SITE_URL}) :3`,
+      color: PASTEL_PURPLE,
+      footer: { text: `emolarp.fans • species generator :3` }
     };
-  }
 
-  // Solo Actions
-  if (SOLO_ACTIONS.includes(commandName)) {
-    const action = commandName;
-    const cutie = params.cutie || null;
-    const vibe = params.vibe || 'furry';
-
-    const gif = await fetchActionGif(action, vibe, logger);
-
-    let title = '';
-    let description = '';
-
-    if (action === 'blush') {
-      title = `Flustered & Blushing~!! ${pick('blush', logger)}`;
-      description = cutie
-        ? `*hides face inside oversized pastel hoodie sleeves*\n\n<@${cutie.id}> made <@${interaction.user.id}> blush super bright pink!! ${pick('blush', logger)} • [emolarp.fans](${SITE_URL})`
-        : `*pulls hoodie sleeves over hands and looks away*\n\n<@${interaction.user.id}> is blushing so hard right now, uwu~!! ${pick('blush', logger)} • [emolarp.fans](${SITE_URL})`;
-    } else if (action === 'tailwag') {
-      title = `Happy Tail Wags~!! ${pick('online', logger)}`;
-      description = cutie
-        ? `*ears perk up straight and tail swishes back and forth at max speed*\n\n<@${interaction.user.id}> is wagging their tail super happily at <@${cutie.id}>!! ${pick('online', logger)} • [emolarp.fans](${SITE_URL})`
-        : `*bounces on tiptoes in striped thigh-highs*\n\n<@${interaction.user.id}> can't stop wagging their tail happily!! ${pick('online', logger)} • [emolarp.fans](${SITE_URL})`;
-    } else if (action === 'purr') {
-      title = `Cozy Catboy Purrs~ prrrrr :3`;
-      description = cutie
-        ? `*curls up in an oversized pastel hoodie and rumbles softly*\n\n<@${interaction.user.id}> is purring happily for <@${cutie.id}>!! ${pick('snuggle', logger)} • [emolarp.fans](${SITE_URL})`
-        : `*kneads soft paws on a fluffy blanket*\n\n*prrrrrrrr~* <@${interaction.user.id}> is super cozy and purring loudly!! ${pick('snuggle', logger)} • [emolarp.fans](${SITE_URL})`;
-    } else {
-      title = `Cute Little Awooo~ ^w^`;
-      description = cutie
-        ? `*tilts head back and perks up fluffy ears*\n\n*awooooooo~!!* <@${interaction.user.id}> lets out a cute little howl with <@${cutie.id}>!! ${pick('online', logger)} • [emolarp.fans](${SITE_URL})`
-        : `*ears perk up and tail wags*\n\n*awooooooo~!!* <@${interaction.user.id}> lets out the cutest little howl!! ${pick('online', logger)} • [emolarp.fans](${SITE_URL})`;
+    if (mediaUrl) {
+      embed.image = { url: mediaUrl };
     }
 
-    return {
-      embeds: [{
-        title,
-        description,
-        color: PASTEL_LAVENDER,
-        thumbnail: { url: (cutie || interaction.user).displayAvatarURL({ size: 256 }) },
-        image: gif?.url ? { url: gif.url } : undefined,
-        footer: {
-          text: gif?.source
-            ? `${gif.source} • paws & thigh-highs certified :3`
-            : 'paws & thigh-highs certified uwu :3'
-        }
-      }]
-    };
-  }
-
-  // /cutemeter
-  if (commandName === 'cutemeter') {
-    const cutie = params.cutie || interaction.user;
-    const isOwner = cutie.id === OWNER_ID;
-    const remainder = Number(BigInt(cutie.id) % 31n);
-    const score = isOwner ? 100 : remainder + 70;
-    const bars = Math.round(score / 10);
-    const meter = `[${'='.repeat(bars)}${'-'.repeat(10 - bars)}]`;
-
-    let verdict = `Certified adorable! Deserves unlimited headpats ${pick('headpat', logger)}`;
-    if (score >= 95) verdict = `MAXIMUM OVERLOAD!! Certified icon!! ${pick('online', logger)}`;
-    else if (score >= 85) verdict = `Super fluffy & dangerously cute! Extra snuggles required ${pick('snuggle', logger)}`;
-
-    return {
-      embeds: [{
-        title: `Official Cute Meter~ ${pick('cute', logger)}`,
-        description: `*ears perk up and scanner beeps!*\n\n**Target:** <@${cutie.id}>\n**Cuteness Score:** **${score}%** \`${meter}\`\n**Verdict:** ${verdict}\n\n[emolarp.fans](${SITE_URL}) :3`,
-        color: PASTEL_PINK,
-        thumbnail: { url: cutie.displayAvatarURL({ size: 256 }) }
-      }]
-    };
+    return { embeds: [embed] };
   }
 
   // /ship
   if (commandName === 'ship') {
-    let c1 = params.cutie || interaction.user;
-    let c2 = params.cutie2 || client.user || interaction.user;
+    const c1 = params.cutie || interaction.user;
+    const c2 = params.cutie2 || interaction.user;
+    const seed = (Number(BigInt(c1.id) ^ BigInt(c2.id)) % 100) + 1;
+    const percentage = Math.abs(seed);
 
-    const split1 = Math.ceil(c1.username.length / 2);
-    const split2 = Math.floor(c2.username.length / 2);
-    const shipName = `${c1.username.slice(0, split1)}${c2.username.slice(split2)}`;
-    const combined = BigInt(c1.id) + BigInt(c2.id);
-    const score = Number(combined % 41n) + 60;
+    let meter = '▓'.repeat(Math.floor(percentage / 10)) + '░'.repeat(10 - Math.floor(percentage / 10));
 
     return {
       embeds: [{
-        title: `Pastel Ship Compatibility~ ${pick('affection', logger)}`,
+        title: `Compatibility Love Meter~ ${pick('affection', logger)}`,
         description:
-          `*paws at the air excitedly!*\n\n` +
-          `<@${c1.id}> + <@${c2.id}> = **${shipName}** ${pick('cute', logger)}\n` +
-          `**Snuggle Compatibility:** **${score}%**!\n\n` +
-          `${score >= 85 ? `*Destined for matching thigh-highs & endless cuddle piles!! ${pick('snuggle', logger)}*` : `*Super sweet duo! Definitely share a hoodie together uwu :3*`}\n\n` +
-          `[emolarp.fans](${SITE_URL}) ^w^`,
-        color: PASTEL_PURPLE
+          `💖 **Match:** <@${c1.id}> × <@${c2.id}>\n\n` +
+          `**Rate:** \`${percentage}%\` [${meter}]\n\n` +
+          (percentage > 75
+            ? `*AWWWW!!* Soulmates forever and ever!! ${pick('blush', logger)}`
+            : percentage > 45
+            ? `A super cozy and cute match!! ${pick('snuggle', logger)}`
+            : `Opposites attract, maybe with more cuddles?! ${pick('playful', logger)}`) +
+          `\n\n• [emolarp.fans](${SITE_URL}) :3`,
+        color: PASTEL_PINK
       }]
     };
   }
 
   // /8ball
   if (commandName === '8ball') {
-    let question = params.question || 'Will I get extra headpats today?';
-    const replies = [
-      `Yeeeesss, 100%!! ${pick('online', logger)}`,
-      `My ears perked up—signs point to yes, uwu~ :3`,
-      `Definitely!! Treat yourself to extra headpats too ^w^`,
-      `Hmm... ask again after a cozy nap and some snuggles~ (－_－) zzZ`,
-      `My tail says maybe! Let's see how the vibes go~ ${pick('cute', logger)}`,
-      `Awr, doesn't look like it right now >_<`,
-      `Nuh-uh, my paws say no this time! ${pick('blush', logger)}`
+    const answers = [
+      `Yes, absolutely yes!! ${pick('cute', logger)}`,
+      `Most pawsitively yes!! ${pick('online', logger)}`,
+      `My tail is wagging, so YES!! ${pick('snuggle', logger)}`,
+      `Better not tell you right now, snuggle me first! ${pick('blush', logger)}`,
+      `Cannot predict now, too busy purring~ ${pick('playful', logger)}`,
+      `My paws say no... >_<`,
+      `Very doubtful, awr... (╥﹏╥)`
     ];
-    const answer = replies[Math.floor(Math.random() * replies.length)];
+    const answer = answers[Math.floor(Math.random() * answers.length)];
 
     return {
       embeds: [{
-        title: `Pastel Catboy 8-Ball~ ${pick('cute', logger)}`,
-        description: `*shakes paws and peers into a glowing pink crystal ball*\n\n**Question:** ${question}\n**Answer:** **${answer}**\n\n[emolarp.fans](${SITE_URL}) :3`,
-        color: PASTEL_LAVENDER
-      }]
-    };
-  }
-
-  // /lovecount
-  if (commandName === 'lovecount') {
-    let cutie = params.cutie || interaction.user;
-    const key = `${interaction.user.id}->${cutie.id}`;
-    const count = affectionCounts.get(key) || 0;
-
-    return {
-      embeds: [{
-        title: `Affection Meter~ ${pick('affection', logger)}`,
-        description: `*tail wags happily!*\n\n<@${interaction.user.id}> has shared affection with <@${cutie.id}> **${count}** time${count === 1 ? '' : 's'}! ${pick('cute', logger)}\n\n[emolarp.fans](${SITE_URL}) :3`,
-        color: PASTEL_PINK,
-        thumbnail: { url: cutie.displayAvatarURL({ size: 256 }) }
+        title: `Mystic Fluffy 8-Ball~ 🔮`,
+        description:
+          `**Question:** ${params.question}\n\n` +
+          `**Answer:** ${answer}\n\n` +
+          `• [emolarp.fans](${SITE_URL}) :3`,
+        color: PASTEL_BLUE
       }]
     };
   }
 
   // /avatar
   if (commandName === 'avatar') {
-    const rawInput = params.user_id || (params.cutie ? params.cutie.id : null);
-    const rawId = rawInput ? rawInput.replace(/[<@!>]/g, '').trim() : interaction.user.id;
-
-    try {
-      const fullUser = await client.users.fetch(rawId, { force: true });
-      const avatarUrl = fullUser.displayAvatarURL({ size: 512 });
-      const bannerUrl = fullUser.bannerURL({ size: 1024 });
-      const decoUrl = fullUser.avatarDecorationURL({ size: 512 });
-
-      return {
-        embeds: [{
-          title: `${fullUser.username}'s Lookbook~ ${pick('cute', logger)}`,
-          description: `*ears perk up!* Showing **${fullUser.username}** (\`${fullUser.id}\`), uwu~ • [emolarp.fans](${SITE_URL})`,
-          color: PASTEL_PURPLE,
-          thumbnail: { url: avatarUrl },
-          image: bannerUrl ? { url: bannerUrl } : undefined,
-          fields: [
-            { name: 'Username', value: `\`${fullUser.username}\``, inline: true },
-            { name: 'Display Name', value: `\`${fullUser.globalName || 'None'}\``, inline: true }
-          ],
-          timestamp: new Date().toISOString()
-        }],
-        components: buildAssetButtons(avatarUrl, bannerUrl, decoUrl, fullUser.id)
-      };
-    } catch {
-      return {
-        content: `Awr~ I couldn’t find anyone with that ID! Make sure Developer Mode is on and copy the numeric User ID, >_<`
-      };
-    }
-  }
-
-  // /stats
-  if (commandName === 'stats') {
-    const uptimeSec = Math.floor(process.uptime());
-    const mins = Math.floor(uptimeSec / 60);
-    const hrs = Math.floor(mins / 60);
+    const targetUser = params.cutie || interaction.user;
+    const avatarUrl = targetUser.displayAvatarURL({ size: 1024, dynamic: true });
 
     return {
       embeds: [{
-        title: `furry Status & Paw-formance~ ${pick('online', logger)}`,
-        description: `*tail wags happily!* Built for Loomie—cozy, awake, and ready for snuggles in DMs and servers, uwu~\n\nWebsite: [emolarp.fans](${SITE_URL}) :3`,
-        color: PASTEL_LAVENDER,
-        fields: [
-          { name: 'Ping', value: `\`${client.ws.ping}ms\``, inline: true },
-          { name: 'Awake For', value: `\`${hrs}h ${mins % 60}m\``, inline: true },
-          { name: 'Total Affection Given', value: `\`${totalAffectionDelivered}\` combos ${pick('affection', logger)}`, inline: true }
-        ]
-      }],
-      ephemeral: true
+        title: `${targetUser.username}'s Cute Avatar~ ${pick('cute', logger)}`,
+        description: `[Direct Image Link](${avatarUrl}) • [emolarp.fans](${SITE_URL}) :3`,
+        color: PASTEL_PURPLE,
+        image: { url: avatarUrl }
+      }]
     };
   }
 
-  const validList = ALL_COMMANDS.filter((c) => c !== 'log').join(', ');
+  // /banner
+  if (commandName === 'banner') {
+    const targetUser = await client.users.fetch(params.cutie?.id || interaction.user.id, { force: true });
+    const bannerUrl = targetUser.bannerURL({ size: 1024, dynamic: true });
+
+    if (!bannerUrl) {
+      return {
+        content: `Awr~ <@${targetUser.id}> doesn't have a custom profile banner set! >_< ${pick('blush', logger)}`
+      };
+    }
+
+    return {
+      embeds: [{
+        title: `${targetUser.username}'s Profile Banner~ ${pick('cute', logger)}`,
+        description: `[Direct Banner Link](${bannerUrl}) • [emolarp.fans](${SITE_URL}) :3`,
+        color: PASTEL_PURPLE,
+        image: { url: bannerUrl }
+      }]
+    };
+  }
+
+  // /ping
+  if (commandName === 'ping') {
+    const latency = Date.now() - interaction.createdTimestamp;
+    const wsPing = client.ws.ping;
+
+    return {
+      embeds: [{
+        title: `Pong!! Paws are Fast~ ${pick('online', logger)}`,
+        description:
+          `• **Gateway Ping:** \`${wsPing}ms\`\n` +
+          `• **Interaction Roundtrip:** \`${latency}ms\`\n` +
+          `• **Website:** [emolarp.fans](${SITE_URL}) :3`,
+        color: PASTEL_MINT
+      }]
+    };
+  }
+
+  // /oc
+  if (commandName === 'oc') {
+    const embed = {
+      title: `Loomie's Cutie OC~ ${pick('cute', logger)}`,
+      description:
+        `*twirls around showing off pastel oversized hoodie, thigh-highs, and cat ears!*\n\n` +
+        `• **Owner:** Loomie (<@${OWNER_ID}>)\n` +
+        `• **Official Site:** [emolarp.fans](${SITE_URL})\n\n` +
+        `Thank you for snuggling with my bot!! ${pick('affection', logger)}`,
+      color: PASTEL_PINK,
+      footer: { text: `emolarp.fans • Official OC Showcase` }
+    };
+
+    if (OC_IMAGE_URL) {
+      embed.image = { url: OC_IMAGE_URL };
+    }
+
+    return { embeds: [embed] };
+  }
+
+  // /help
+  if (commandName === 'help') {
+    return {
+      embeds: [{
+        title: `Furry Bot Command Guide~ ${pick('online', logger)}`,
+        description:
+          `**Art & Booru Search:**\n` +
+          `• \`/e621 [tags] [order]\` — Pure e621.net adult booru query (supports random, tags, score, animations)\n` +
+          `• \`/species [species]\` — Dynamic species transform image generator\n\n` +
+          `**Cozy Roleplay (Interactive Buttons):**\n` +
+          `• \`/snuggle\`, \`/hug\`, \`/lick\`, \`/kiss\`, \`/boop\`, \`/headpat\`, \`/cuddle\`, \`/bite\`, \`/holdhands\`, \`/poke\`, \`/glomp\`, \`/nuzzle\`, \`/rawr\`, \`/pounce\`, \`/groom\`, \`/yeet\`, \`/cry\`, \`/slap\`, \`/highfive\`, \`/blush\`\n\n` +
+          `**Admin & Diagnostics:**\n` +
+          `• \`/update [scope]\` or \`!update\` — Instant guild command cache flush & re-sync (Owner only)\n` +
+          `• \`/log command: <cmd> args: <args>\` — Extremely detailed execution trace with plain English diagnosis\n\n` +
+          `• **Official Website:** [emolarp.fans](${SITE_URL}) :3`,
+        color: PASTEL_PINK
+      }]
+    };
+  }
+
   return {
-    content: `Awr~ Unknown command \`/${commandName}\`! >_<\nAvailable commands to run with \`/log\`: \`${validList}\` :3`
+    content: `Awr~ Unknown command \`/${commandName}\`! Type \`/help\` to see everything I can do! >_<`
   };
 }
 
-// Prefix / Message Command Fallback (!update or @bot update)
+// All Slash Command Definitions
+const ALL_ACTIONS = [
+  ['snuggle', 'Wrap a cutie in cozy warm snuggles!'],
+  ['hug', 'Give a big warm fluffy squeeze!'],
+  ['lick', 'Give a cute puppy cheek lick!'],
+  ['kiss', 'Give a soft pastel kiss!'],
+  ['boop', 'Boop someone on their cute nose!'],
+  ['headpat', 'Gently pat a good cutie on the head!'],
+  ['cuddle', 'Curl up together for a sweet cuddle!'],
+  ['bite', 'Give a tiny playful affection nibble!'],
+  ['holdhands', 'Interlock warm fluffy paws!'],
+  ['poke', 'Poke a cutie playfully to get attention!'],
+  ['glomp', 'Launch an unstoppable flying tackle hug!'],
+  ['blush', 'Get flustered with pink rosy cheeks!'],
+  ['nuzzle', 'Nuzzle your nose and whiskers softly!'],
+  ['rawr', 'Let out a ferocious cute little rawr!'],
+  ['pounce', 'Playfully pounce on an unsuspecting cutie!'],
+  ['groom', 'Carefully preen and tidy someone’s fur!'],
+  ['yeet', 'Comically yeet someone into low orbit!'],
+  ['cry', 'Sniffle and shed big soft puppy tears!'],
+  ['slap', 'Deliver a dramatic squeaky-toy slap!'],
+  ['highfive', 'Slap a crisp high-five together!']
+];
+
+const slashActionCommands = ALL_ACTIONS.map(([name, desc]) =>
+  new SlashCommandBuilder()
+    .setName(name)
+    .setDescription(desc)
+    .addUserOption((o) => o.setName('cutie').setDescription('The cutie to target').setRequired(false))
+    .setIntegrationTypes([
+      ApplicationIntegrationType.GuildInstall,
+      ApplicationIntegrationType.UserInstall
+    ])
+    .setContexts([
+      InteractionContextType.Guild,
+      InteractionContextType.BotDM,
+      InteractionContextType.PrivateChannel
+    ])
+);
+
+const ALL_COMMANDS = [
+  ...slashActionCommands,
+  new SlashCommandBuilder()
+    .setName('e621')
+    .setDescription('Fetch an adult art/GIF post directly from e621.net')
+    .addStringOption((o) => o.setName('tags').setDescription('Tags to search (e.g. dragon, deer, fox)').setRequired(false))
+    .addStringOption((o) =>
+      o
+        .setName('order')
+        .setDescription('Sort order')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Newest', value: 'newest' },
+          { name: 'Top Score', value: 'score' },
+          { name: 'Random', value: 'random' }
+        )
+    )
+    .setIntegrationTypes([
+      ApplicationIntegrationType.GuildInstall,
+      ApplicationIntegrationType.UserInstall
+    ])
+    .setContexts([
+      InteractionContextType.Guild,
+      InteractionContextType.BotDM,
+      InteractionContextType.PrivateChannel
+    ]),
+  new SlashCommandBuilder()
+    .setName('update')
+    .setDescription('Force-synchronize slash commands to this server or globally (Owner only)')
+    .addStringOption((o) =>
+      o
+        .setName('scope')
+        .setDescription('Where to register commands')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Guild & Global (Recommended)', value: 'both' },
+          { name: 'Current Guild Only (Instant)', value: 'guild' },
+          { name: 'Global Only', value: 'global' }
+        )
+    )
+    .setIntegrationTypes([
+      ApplicationIntegrationType.GuildInstall,
+      ApplicationIntegrationType.UserInstall
+    ])
+    .setContexts([
+      InteractionContextType.Guild,
+      InteractionContextType.BotDM,
+      InteractionContextType.PrivateChannel
+    ]),
+  new SlashCommandBuilder()
+    .setName('log')
+    .setDescription('Run any command with a verbose diagnostic trace')
+    .addStringOption((o) => o.setName('command').setDescription('The command to test (e.g. e621, ping)').setRequired(true))
+    .addStringOption((o) => o.setName('args').setDescription('Arguments (e.g. dragon, @cutie)').setRequired(false))
+    .addUserOption((o) => o.setName('cutie').setDescription('Cutie target for actions').setRequired(false))
+    .addUserOption((o) => o.setName('cutie2').setDescription('Second cutie for /ship').setRequired(false))
+    .addStringOption((o) => o.setName('tags').setDescription('Tags for /e621').setRequired(false))
+    .addStringOption((o) => o.setName('order').setDescription('Order for /e621').setRequired(false))
+    .addStringOption((o) => o.setName('species').setDescription('Species for /species').setRequired(false))
+    .addStringOption((o) => o.setName('question').setDescription('Question for /8ball').setRequired(false))
+    .setIntegrationTypes([
+      ApplicationIntegrationType.GuildInstall,
+      ApplicationIntegrationType.UserInstall
+    ])
+    .setContexts([
+      InteractionContextType.Guild,
+      InteractionContextType.BotDM,
+      InteractionContextType.PrivateChannel
+    ]),
+  new SlashCommandBuilder()
+    .setName('species')
+    .setDescription('Transform into an adorable species!')
+    .addStringOption((o) =>
+      o
+        .setName('species')
+        .setDescription('Species type')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Neko (Catgirl)', value: 'neko' },
+          { name: 'Kitsune (Fox)', value: 'kitsune' },
+          { name: 'Waifu', value: 'waifu' },
+          { name: 'Maid', value: 'maid' }
+        )
+    )
+    .setIntegrationTypes([
+      ApplicationIntegrationType.GuildInstall,
+      ApplicationIntegrationType.UserInstall
+    ])
+    .setContexts([
+      InteractionContextType.Guild,
+      InteractionContextType.BotDM,
+      InteractionContextType.PrivateChannel
+    ]),
+  new SlashCommandBuilder()
+    .setName('ship')
+    .setDescription('Calculate compatibility percentage between two cuties!')
+    .addUserOption((o) => o.setName('cutie1').setDescription('First cutie').setRequired(true))
+    .addUserOption((o) => o.setName('cutie2').setDescription('Second cutie').setRequired(false))
+    .setIntegrationTypes([
+      ApplicationIntegrationType.GuildInstall,
+      ApplicationIntegrationType.UserInstall
+    ])
+    .setContexts([
+      InteractionContextType.Guild,
+      InteractionContextType.BotDM,
+      InteractionContextType.PrivateChannel
+    ]),
+  new SlashCommandBuilder()
+    .setName('8ball')
+    .setDescription('Ask the magical fuzzy 8-ball anything!')
+    .addStringOption((o) => o.setName('question').setDescription('Your question').setRequired(true))
+    .setIntegrationTypes([
+      ApplicationIntegrationType.GuildInstall,
+      ApplicationIntegrationType.UserInstall
+    ])
+    .setContexts([
+      InteractionContextType.Guild,
+      InteractionContextType.BotDM,
+      InteractionContextType.PrivateChannel
+    ]),
+  new SlashCommandBuilder()
+    .setName('avatar')
+    .setDescription('View full-resolution avatar of yourself or a friend')
+    .addUserOption((o) => o.setName('cutie').setDescription('The cutie to view').setRequired(false))
+    .setIntegrationTypes([
+      ApplicationIntegrationType.GuildInstall,
+      ApplicationIntegrationType.UserInstall
+    ])
+    .setContexts([
+      InteractionContextType.Guild,
+      InteractionContextType.BotDM,
+      InteractionContextType.PrivateChannel
+    ]),
+  new SlashCommandBuilder()
+    .setName('banner')
+    .setDescription('View custom profile banner of yourself or a friend')
+    .addUserOption((o) => o.setName('cutie').setDescription('The cutie to inspect').setRequired(false))
+    .setIntegrationTypes([
+      ApplicationIntegrationType.GuildInstall,
+      ApplicationIntegrationType.UserInstall
+    ])
+    .setContexts([
+      InteractionContextType.Guild,
+      InteractionContextType.BotDM,
+      InteractionContextType.PrivateChannel
+    ]),
+  new SlashCommandBuilder()
+    .setName('ping')
+    .setDescription('Check WebSocket gateway ping & connection latency')
+    .setIntegrationTypes([
+      ApplicationIntegrationType.GuildInstall,
+      ApplicationIntegrationType.UserInstall
+    ])
+    .setContexts([
+      InteractionContextType.Guild,
+      InteractionContextType.BotDM,
+      InteractionContextType.PrivateChannel
+    ]),
+  new SlashCommandBuilder()
+    .setName('oc')
+    .setDescription('Show Loomie\'s official cutie OC!')
+    .setIntegrationTypes([
+      ApplicationIntegrationType.GuildInstall,
+      ApplicationIntegrationType.UserInstall
+    ])
+    .setContexts([
+      InteractionContextType.Guild,
+      InteractionContextType.BotDM,
+      InteractionContextType.PrivateChannel
+    ]),
+  new SlashCommandBuilder()
+    .setName('help')
+    .setDescription('Show complete command guide & website information')
+    .setIntegrationTypes([
+      ApplicationIntegrationType.GuildInstall,
+      ApplicationIntegrationType.UserInstall
+    ])
+    .setContexts([
+      InteractionContextType.Guild,
+      InteractionContextType.BotDM,
+      InteractionContextType.PrivateChannel
+    ])
+];
+
+// Deploy & Synchronize Commands
+async function deployCommands({ guildId = null, scope = 'both', logger = null } = {}) {
+  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+  const payload = ALL_COMMANDS.map((c) => c.toJSON());
+  const res = { globalCount: null, guildCount: null };
+
+  if (scope === 'global' || scope === 'both') {
+    logger?.log('DEPLOY:GLOBAL', `Registering ${payload.length} global slash commands with Discord API`);
+    const data = await rest.put(Routes.applicationCommands(client.user.id), { body: payload });
+    res.globalCount = Array.isArray(data) ? data.length : payload.length;
+    logger?.log('DEPLOY:GLOBAL_OK', `Successfully registered ${res.globalCount} global commands`);
+  }
+
+  if ((scope === 'guild' || scope === 'both') && guildId) {
+    logger?.log('DEPLOY:GUILD', `Registering ${payload.length} instant guild commands for guildId="${guildId}"`);
+    const data = await rest.put(Routes.applicationGuildCommands(client.user.id, guildId), { body: payload });
+    res.guildCount = Array.isArray(data) ? data.length : payload.length;
+    logger?.log('DEPLOY:GUILD_OK', `Successfully registered ${res.guildCount} guild commands`);
+  }
+
+  return res;
+}
+
+// Bot Gateway Events
+client.once(Events.ClientReady, async () => {
+  console.log(`[BOOT] Logged in as ${client.user.tag}! ${pick('online')}`);
+  console.log(`[BOOT] Loomie's ID: ${OWNER_ID} | Website: ${SITE_URL}`);
+
+  try {
+    await deployCommands({ scope: 'global' });
+    console.log(`[BOOT] Commands deployed globally!`);
+  } catch (err) {
+    console.error(`[BOOT] Failed to deploy global commands:`, err);
+  }
+});
+
+// Text command listener (!update / !sync)
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return;
 
@@ -1454,131 +1251,96 @@ client.on(Events.MessageCreate, async (message) => {
   let e621Status = 'Testing...';
   try {
     const e621Check = await fetchE621Post('deer', 'newest');
-    e621Status = e621Check ? `✅ Online & Working (Post #${e621Check.id})` : '⚠️ No media returned';
+    e621Status = e621Check ? `✅ Working (Post #${e621Check.id})` : '⚠️ No media returned';
   } catch (e) {
     e621Status = `❌ Error: ${e.message}`;
   }
 
+  const fields = [
+    { name: 'Server Commands', value: message.guildId ? `\`${deployRes.guildCount}\` (Instant Sync!)` : 'N/A (DM)', inline: true },
+    { name: 'Global Commands', value: `\`${deployRes.globalCount}\` deployed`, inline: true },
+    { name: 'Gateway Ping', value: `\`${client.ws.ping}ms\``, inline: true },
+    { name: 'e621.net Check', value: e621Status, inline: true },
+    { name: 'Website', value: `[emolarp.fans](${SITE_URL})`, inline: true }
+  ];
+
   await statusMsg.edit({
-    content:
-      `*tail wags happily!* ✨ **Slash Commands Successfully Updated!**\n\n` +
-      `• **Current Server:** \`${deployRes.guildCount ?? 0}\` commands synced **INSTANTLY** (0s delay!)\n` +
-      `• **Global (All Servers/DMs):** \`${deployRes.globalCount ?? 0}\` commands deployed\n` +
-      `• **e621.net Check:** ${e621Status}\n` +
-      `• **Tip:** If the slash command menu hasn't refreshed on your screen, press **Ctrl + R** on Discord desktop or restart mobile Discord to clear Discord's local cache :3\n` +
-      `• [emolarp.fans](${SITE_URL}) ^w^`
+    content: null,
+    embeds: [{
+      title: `⚡ Commands Synchronized! ${pick('online')}`,
+      description: `All slash commands have been registered with Discord! Server commands update instantly. If commands are still missing in your client, press **Ctrl+R** to reload Discord. :3`,
+      color: PASTEL_MINT,
+      fields,
+      footer: { text: `Triggered by Loomie (${OWNER_ID})` }
+    }]
   });
 });
 
-// Handle Slash Commands & Interactive Buttons
+// Interactive Button Clicks & Slash Commands
 client.on(Events.InteractionCreate, async (interaction) => {
-  try {
-    // Handle "Roll Again" button for /e621
-    if (interaction.isButton() && interaction.customId.startsWith('e621:')) {
-      const [, order, ...tagParts] = interaction.customId.split(':');
-      const rawTags = tagParts.join(':');
-      lastE621Query = { tags: rawTags, order: order || 'newest', ranAt: new Date().toISOString() };
-      await interaction.deferReply();
+  // Handle Action Buttons (Roll Again & Interactive Actions)
+  if (interaction.isButton()) {
+    try {
+      const parts = interaction.customId.split(':');
+      const prefix = parts[0];
 
-      const post = await fetchE621Post(rawTags, order || 'newest');
-      if (!post) {
-        return interaction.editReply(`Awr~ Couldn't find another post on e621.net for \`${rawTags || 'those tags'}\` right now! >_<`);
+      if (prefix === 'e621') {
+        await interaction.deferUpdate();
+        const order = parts[1] || 'newest';
+        const rawTags = parts.slice(2).join(':');
+
+        const post = await fetchE621Post(rawTags, order);
+        if (!post) {
+          return interaction.followUp({
+            content: `Awr~ I couldn't find another post for \`${rawTags || 'your search'}\`! Try simpler tags like \`deer\`, \`dragon\`, or \`fox\`, >_<`,
+            ephemeral: true
+          });
+        }
+
+        const payload = buildE621Response(post, rawTags, order);
+        return interaction.editReply(payload);
       }
-      await interaction.editReply(buildE621Response(post, rawTags, order || 'newest'));
-      return;
-    }
 
-    // Handle "Return the Affection" Button Clicks
-    if (interaction.isButton() && interaction.customId.startsWith('back:')) {
-      const [, action, senderId, receiverId, vibe] = interaction.customId.split(':');
+      if (prefix === 'act') {
+        const action = parts[1];
+        const targetUserId = parts[2];
+        const count = recordAffection(interaction.user.id, targetUserId);
 
-      if (receiverId && interaction.user.id !== receiverId && interaction.user.id !== senderId) {
+        const actionData = buildActionCopy(action, interaction.user.id, targetUserId);
+        if (!actionData) return;
+
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`act:${action}:${interaction.user.id}`)
+            .setLabel(actionData.backLabel)
+            .setStyle(ButtonStyle.Primary)
+        );
+
         return interaction.reply({
-          content: `Awr~ That button is for <@${receiverId}> to hug/snuggle back, nya! ${pick('blush')}`,
-          ephemeral: true
+          embeds: [{
+            title: actionData.title,
+            description:
+              `${actionData.text}\n\n` +
+              `💖 **Total Affection Count:** \`${count}\` times between you two! (Overall delivered: \`${totalAffectionDelivered}\`)\n` +
+              `• [emolarp.fans](${SITE_URL}) :3`,
+            color: PASTEL_PINK,
+            footer: { text: `emolarp.fans • paws & affection certified :3` }
+          }],
+          components: [row]
         });
       }
-
-      await interaction.deferReply();
-
-      const gif = await fetchActionGif(action, vibe || 'furry');
-      const count = recordAffection(interaction.user.id, senderId);
-      const chosen = buildActionCopy(action, interaction.user.id, senderId);
-      const targetUser = await client.users.fetch(senderId).catch(() => null);
-
-      await interaction.editReply({
-        embeds: [{
-          title: `${chosen.title} (Returned!)`,
-          description: `${chosen.text}\n\n*Affection combo with <@${senderId}>: **${count}** time${count === 1 ? '' : 's'}! ^w^* • [emolarp.fans](${SITE_URL})`,
-          color: PASTEL_PURPLE,
-          thumbnail: targetUser ? { url: targetUser.displayAvatarURL({ size: 256 }) } : undefined,
-          image: gif?.url ? { url: gif.url } : undefined,
-          footer: {
-            text: gif?.source
-              ? `${gif.source} • paws & thigh-highs certified :3`
-              : 'paws & thigh-highs certified uwu :3'
-          }
-        }]
-      });
-      return;
+    } catch (err) {
+      console.error('Button error:', err);
     }
+    return;
+  }
 
-    if (!interaction.isChatInputCommand()) return;
+  if (!interaction.isChatInputCommand()) return;
 
-    // /log
-    if (interaction.commandName === 'log') {
-      const deferStart = performance.now();
-      await interaction.deferReply();
+  const logger = new VerboseLogger(interaction.commandName === 'log');
 
-      const logger = new VerboseLogger(true);
-      logger.reset();
-      const memStart = process.memoryUsage();
-
-      logger.log('INIT', `Initialized fresh verbose logger for /log`, {
-        interactionId: interaction.id,
-        user: `${interaction.user.tag} (${interaction.user.id})`,
-        guildId: interaction.guildId || 'DM',
-        deferMs: (performance.now() - deferStart).toFixed(2)
-      });
-
-      const { targetCommand, params } = await parseLogCommandInput(interaction, logger);
-      const resultPayload = await executeBotCommand(targetCommand, params, interaction, logger);
-
-      const memEnd = process.memoryUsage();
-      const totalMs = (performance.now() - logger.startTime).toFixed(2);
-      logger.log('COMPLETE', `Finished /${targetCommand} execution in ${totalMs}ms`, {
-        totalDurationMs: Number(totalMs),
-        totalLogEntries: logger.entries.length + 1,
-        heapUsedMB: (memEnd.heapUsed / 1048576).toFixed(2)
-      });
-
-      const plainEnglishSummary = logger.buildPlainEnglishSummary(targetCommand, totalMs);
-      const baseContent = resultPayload.content ? `${resultPayload.content}\n\n` : '';
-      const header = `${plainEnglishSummary}\n\n**📋 Technical Trace (\`/${targetCommand}\` • \`${logger.entries.length} events\`)**`;
-      const maxLogChars = Math.max(250, 1920 - baseContent.length - header.length - 16);
-      const formattedLog = logger.format(maxLogChars);
-      const contentWithLogs = `${baseContent}${header}\n\`\`\`log\n${formattedLog}\n\`\`\``.slice(0, 2000);
-
-      const finalPayload = {
-        ...resultPayload,
-        content: contentWithLogs
-      };
-      delete finalPayload.ephemeral;
-
-      if (finalPayload.embeds?.length > 0) {
-        const mainEmbed = { ...finalPayload.embeds[0] };
-        if (mainEmbed.description && mainEmbed.description.length > 4000) {
-          mainEmbed.description = mainEmbed.description.slice(0, 4000) + '...';
-        }
-        finalPayload.embeds = [mainEmbed, ...finalPayload.embeds.slice(1)];
-      }
-
-      await interaction.editReply(finalPayload);
-      return;
-    }
-
-    // Direct command execution
-    const deferredCommands = ['e621', 'furrypic', 'oc', ...TARGET_ACTIONS, ...SOLO_ACTIONS, 'avatar', 'update'];
+  try {
+    const deferredCommands = ['e621', 'log', 'species', ...ALL_ACTIONS.map(([n]) => n), 'avatar', 'banner', 'update'];
     const needsDefer = deferredCommands.includes(interaction.commandName);
     if (needsDefer) {
       await interaction.deferReply();
@@ -1596,7 +1358,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       scope: interaction.options.getString('scope') || 'both'
     };
 
-    const payload = await executeBotCommand(interaction.commandName, directParams, interaction, null);
+    const payload = await executeBotCommand(interaction.commandName, directParams, interaction, logger);
     if (needsDefer) {
       await interaction.editReply(payload);
     } else {
