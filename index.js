@@ -92,6 +92,60 @@ const PASTEL_PINK = 0xff99cc;
 const PASTEL_PURPLE = 0xc792ea;
 const PASTEL_LAVENDER = 0xe0b0ff;
 
+// Fetch SFW media from e621.net Booru API with specified tags!
+async function fetchE621Post(rawTags = '', order = 'random') {
+  // Strip any explicit/questionable rating overrides so DMs & servers stay strictly SFW (rating:s)
+  const cleanedUserTags = rawTags
+    .split(/\s+/)
+    .map((t) => t.trim().toLowerCase())
+    .filter((t) => t && !t.startsWith('rating:') && !t.startsWith('-rating:') && !t.startsWith('order:'));
+
+  const finalTags = ['rating:s', '-webm', '-swf', ...cleanedUserTags];
+  if (order === 'random') finalTags.push('order:random');
+  else if (order === 'score') finalTags.push('order:score');
+
+  const query = encodeURIComponent(finalTags.join(' '));
+  const url = `https://e621.net/posts.json?limit=25&tags=${query}`;
+
+  try {
+    const res = await fetch(url, {
+      headers: {
+        // e621 requires a descriptive User-Agent header!
+        'User-Agent': 'furry-discord-bot/4.5 (by Loomie on GitHub)'
+      },
+      signal: AbortSignal.timeout(6000)
+    });
+
+    if (!res.ok) return null;
+    const data = await res.json();
+    const validPosts = (data?.posts || []).filter(
+      (p) => p?.file?.url && ['jpg', 'jpeg', 'png', 'gif'].includes(p.file.ext?.toLowerCase())
+    );
+
+    if (validPosts.length === 0) return null;
+
+    // Pick random from top results when sorting by score/newest, or first from order:random
+    const chosen = order === 'random'
+      ? validPosts[0]
+      : validPosts[Math.floor(Math.random() * Math.min(validPosts.length, 10))];
+
+    const artists = (chosen.tags?.artist || []).filter((a) => a !== 'conditional_dnp').slice(0, 3);
+    const species = (chosen.tags?.species || []).slice(0, 4);
+
+    return {
+      id: chosen.id,
+      imageUrl: chosen.file.url,
+      postUrl: `https://e621.net/posts/${chosen.id}`,
+      score: chosen.score?.total ?? 0,
+      artists: artists.length ? artists.join(', ') : 'Unknown',
+      species: species.length ? species.join(', ') : 'Unspecified',
+      searchedTags: cleanedUserTags.length ? cleanedUserTags.join(' ') : 'all safe posts'
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Fetch cute SFW furry/neko/kitsune/okami GIFs from PurrBot & Nekos.best
 async function fetchActionGif(action, vibe = 'furry') {
   const purrMap = {
@@ -162,7 +216,7 @@ async function fetchActionGif(action, vibe = 'furry') {
   return null;
 }
 
-// Fetch random SFW species image/GIF from PurrBot (neko, kitsune, okami, eevee, holo)
+// Fetch random SFW species image/GIF from PurrBot
 async function fetchFurrySpecies(species = 'neko') {
   try {
     const res = await fetch(`https://api.purrbot.site/v2/img/sfw/${species}/gif`, {
@@ -317,6 +371,28 @@ client.once(Events.ClientReady, async () => {
   client.user.setActivity('paws, snuggles & emolarp.fans :3', { type: 3 });
 
   const commands = [
+    makeEverywhere(
+      new SlashCommandBuilder()
+        .setName('e621')
+        .setDescription('Pull SFW furry images & GIFs from e621.net using booru tags! :3')
+        .addStringOption((opt) =>
+          opt
+            .setName('tags')
+            .setDescription('Space-separated booru tags (e.g. "deer kemonomimi", "fox cuddle") :3')
+            .setRequired(false)
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName('order')
+            .setDescription('How to sort results! ^w^')
+            .setRequired(false)
+            .addChoices(
+              { name: 'Random :3', value: 'random' },
+              { name: 'Top Score ^w^', value: 'score' },
+              { name: 'Newest uwu', value: 'newest' }
+            )
+        )
+    ),
     makeEverywhere(
       new SlashCommandBuilder()
         .setName('oc')
@@ -578,8 +654,52 @@ client.once(Events.ClientReady, async () => {
   await rest.put(Routes.applicationCommands(client.user.id), { body: commands }).catch(console.error);
 });
 
-// Handle Slash Commands & Interactive "Return Affection" Buttons
+// Helper to build an e621 embed + Roll Again / View Post buttons
+function buildE621Response(post, rawTags = '', order = 'random') {
+  const safeCustomId = `e621:${order}:${rawTags.slice(0, 75)}`;
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(safeCustomId)
+      .setLabel('Roll Again :3')
+      .setEmoji('1574663049581699082')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setLabel('View on e621 ^w^')
+      .setStyle(ButtonStyle.Link)
+      .setURL(post.postUrl)
+  );
+
+  return {
+    embeds: [{
+      title: `${EMOJI.furry} e621 Safe Booru Pull~ ${pick('cute')}`,
+      description:
+        `*ears perk up and tail wags!* Found a fresh SFW post for \`${post.searchedTags}\`! ${EMOJI.bkHappy}\n\n` +
+        `• **Artist:** \`${post.artists}\` • **Species:** \`${post.species}\` • **Score:** \`${post.score}\`\n` +
+        `• [emolarp.fans](${SITE_URL}) :3`,
+      color: PASTEL_PINK,
+      image: { url: post.imageUrl },
+      footer: { text: `e621.net (rating:s) • Post #${post.id} • paws & thigh-highs certified :3` }
+    }],
+    components: [row]
+  };
+}
+
+// Handle Slash Commands & Interactive Buttons
 client.on(Events.InteractionCreate, async (interaction) => {
+  // Handle "Roll Again" button for /e621
+  if (interaction.isButton() && interaction.customId.startsWith('e621:')) {
+    const [, order, ...tagParts] = interaction.customId.split(':');
+    const rawTags = tagParts.join(':');
+    await interaction.deferReply();
+
+    const post = await fetchE621Post(rawTags, order || 'random');
+    if (!post) {
+      return interaction.editReply(`Awr~ Couldn't find another SFW e621 post for \`${rawTags || 'those tags'}\` right now! >_<`);
+    }
+    await interaction.editReply(buildE621Response(post, rawTags, order || 'random'));
+    return;
+  }
+
   // Handle "Return the Affection" Button Clicks!
   if (interaction.isButton() && interaction.customId.startsWith('back:')) {
     const [, action, senderId, receiverId, vibe] = interaction.customId.split(':');
@@ -616,6 +736,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 
   if (!interaction.isChatInputCommand()) return;
+
+  // /e621 — Pull SFW booru images/GIFs from e621.net with custom tags!
+  if (interaction.commandName === 'e621') {
+    await interaction.deferReply();
+    const rawTags = interaction.options.getString('tags') || '';
+    const order = interaction.options.getString('order') || 'random';
+    const post = await fetchE621Post(rawTags, order);
+
+    if (!post) {
+      return interaction.editReply(
+        `Awr~ I couldn't find any SFW (\`rating:s\`) image/GIF posts on e621 for \`${rawTags || 'your search'}\`! Try simpler underscore tags like \`deer\`, \`fox cuddle\`, or \`cat_boy\`, >_<`
+      );
+    }
+
+    await interaction.editReply(buildE621Response(post, rawTags, order));
+    return;
+  }
 
   // /emote — Send any of Loomie's 29 custom emojis!
   if (interaction.commandName === 'emote') {
