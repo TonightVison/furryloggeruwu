@@ -18,12 +18,24 @@ const client = new Client({
 });
 
 const LOG_WEBHOOK_URL = process.env.LOG_WEBHOOK_URL;
+const POLL_INTERVAL_MS = 5 * 60 * 1000; // Check external tracked users every 5 minutes
+
+// Load any comma-separated IDs from Render env var TRACKED_USER_IDS (e.g. "123456789,987654321")
+const trackedUsers = new Map();
+if (process.env.TRACKED_USER_IDS) {
+  for (const rawId of process.env.TRACKED_USER_IDS.split(',')) {
+    const id = rawId.trim();
+    if (/^\d{17,20}$/.test(id)) {
+      trackedUsers.set(id, null);
+    }
+  }
+}
 
 const STATUS_LABELS = {
   online: '🟢 Online',
   idle: '🌙 Idle',
   dnd: '⛔ Do Not Disturb',
-  offline: '⚫ Offline'
+  offline: '⚫ Offline / Unavailable'
 };
 
 function getCustomStatus(presence) {
@@ -48,7 +60,17 @@ async function sendLogEmbed(embed) {
   }).catch(console.error);
 }
 
-// 1. Automatic Status & Custom Status Logger
+// Helper to snapshot a user's public profile fields
+function buildSnapshot(user) {
+  return {
+    username: user.username,
+    globalName: user.globalName || null,
+    avatarUrl: user.displayAvatarURL({ size: 512 }),
+    bannerUrl: user.bannerURL({ size: 1024 }) || null
+  };
+}
+
+// 1. Live Status & Custom Status Logger (Server Members Only — Discord API rule!)
 client.on(Events.PresenceUpdate, async (oldPresence, newPresence) => {
   const member = newPresence.member;
   if (!member || member.user.bot) return;
@@ -93,7 +115,7 @@ client.on(Events.PresenceUpdate, async (oldPresence, newPresence) => {
   });
 });
 
-// 2. Automatic Username, Display Name, PFP & Banner Logger
+// 2. Live Username, Display Name, PFP & Banner Logger (Server Members)
 client.on(Events.UserUpdate, async (oldUser, newUser) => {
   if (newUser.bot) return;
 
@@ -134,68 +156,186 @@ client.on(Events.UserUpdate, async (oldUser, newUser) => {
   });
 });
 
-// 3. Register /lookup Command on Ready
+// 3. Poll External Tracked User IDs (Users NOT in the server!)
+async function pollTrackedUsers() {
+  for (const [userId, prev] of trackedUsers.entries()) {
+    try {
+      const fullUser = await client.users.fetch(userId, { force: true });
+      const current = buildSnapshot(fullUser);
+
+      if (!prev) {
+        trackedUsers.set(userId, current);
+        continue;
+      }
+
+      const changes = [];
+      if (prev.username !== current.username) {
+        changes.push(`**Username:** \`${prev.username}\` ➜ \`${current.username}\``);
+      }
+      if (prev.globalName !== current.globalName) {
+        changes.push(`**Display Name:** \`${prev.globalName || 'None'}\` ➜ \`${current.globalName || 'None'}\``);
+      }
+      if (prev.avatarUrl !== current.avatarUrl) {
+        changes.push(`**Avatar (PFP):** Updated! [New PFP](${current.avatarUrl})`);
+      }
+      if (prev.bannerUrl !== current.bannerUrl) {
+        changes.push(
+          current.bannerUrl
+            ? `**Banner:** Updated! [New Banner](${current.bannerUrl})`
+            : '**Banner:** Removed'
+        );
+      }
+
+      trackedUsers.set(userId, current);
+
+      if (changes.length > 0) {
+        await sendLogEmbed({
+          title: '🌸 External User Updated',
+          description: `**${current.username}** (\`${userId}\`)\n\n${changes.join('\n')}`,
+          color: 0xb388ff,
+          thumbnail: { url: current.avatarUrl },
+          image: current.bannerUrl ? { url: current.bannerUrl } : undefined,
+          timestamp: new Date().toISOString()
+        });
+      }
+    } catch (err) {
+      console.error(`Failed to fetch tracked user ${userId}:`, err.message);
+    }
+  }
+}
+
+// 4. Register Slash Commands
 client.once(Events.ClientReady, async () => {
   console.log(`furry online as ${client.user.tag} :3`);
 
   const commands = [
     new SlashCommandBuilder()
       .setName('lookup')
-      .setDescription('Log a user’s current username, PFP, banner, and status to the webhook')
-      .addUserOption((opt) =>
-        opt.setName('user').setDescription('Target user').setRequired(true)
+      .setDescription('Log any user’s current username, PFP, banner, and status (if in server)')
+      .addStringOption((opt) =>
+        opt.setName('user_id').setDescription('Discord User ID (works even outside the server!)').setRequired(true)
       )
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('track')
+      .setDescription('Add a user ID (even outside the server) to monitor profile changes')
+      .addStringOption((opt) =>
+        opt.setName('user_id').setDescription('Discord User ID to track').setRequired(true)
+      )
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('untrack')
+      .setDescription('Stop monitoring an external user ID')
+      .addStringOption((opt) =>
+        opt.setName('user_id').setDescription('Discord User ID to remove').setRequired(true)
+      )
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('tracked')
+      .setDescription('List all external user IDs currently being tracked')
       .toJSON()
   ];
 
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   await rest.put(Routes.applicationCommands(client.user.id), { body: commands }).catch(console.error);
+
+  await pollTrackedUsers();
+  setInterval(pollTrackedUsers, POLL_INTERVAL_MS);
 });
 
-// 4. Handle /lookup Slash Command
+// 5. Handle Slash Commands
 client.on(Events.InteractionCreate, async (interaction) => {
-  if (!interaction.isChatInputCommand() || interaction.commandName !== 'lookup') return;
-  await interaction.deferReply({ ephemeral: true });
+  if (!interaction.isChatInputCommand()) return;
 
-  const targetUser = interaction.options.getUser('user', true);
-  const fullUser = await targetUser.fetch(true).catch(() => targetUser);
-  const member = await interaction.guild?.members.fetch(fullUser.id).catch(() => null);
+  if (interaction.commandName === 'lookup') {
+    await interaction.deferReply({ ephemeral: true });
+    const rawId = interaction.options.getString('user_id', true).replace(/[<@!>]/g, '').trim();
 
-  const status = member?.presence?.status || 'offline';
-  const customStatus = getCustomStatus(member?.presence);
-  const avatarUrl = fullUser.displayAvatarURL({ size: 512 });
-  const bannerUrl = fullUser.bannerURL({ size: 1024 });
+    try {
+      const fullUser = await client.users.fetch(rawId, { force: true });
+      const member = await interaction.guild?.members.fetch(fullUser.id).catch(() => null);
 
-  const fields = [
-    { name: 'Username', value: `\`${fullUser.username}\``, inline: true },
-    { name: 'Display Name', value: `\`${fullUser.globalName || 'None'}\``, inline: true },
-    { name: 'Status', value: STATUS_LABELS[status] || status, inline: true }
-  ];
+      const status = member ? (member.presence?.status || 'offline') : null;
+      const customStatus = member ? getCustomStatus(member.presence) : null;
+      const avatarUrl = fullUser.displayAvatarURL({ size: 512 });
+      const bannerUrl = fullUser.bannerURL({ size: 1024 });
 
-  if (customStatus) {
-    fields.push({ name: 'Custom Status', value: `\`${customStatus}\``, inline: false });
+      const fields = [
+        { name: 'Username', value: `\`${fullUser.username}\``, inline: true },
+        { name: 'Display Name', value: `\`${fullUser.globalName || 'None'}\``, inline: true },
+        {
+          name: 'Status',
+          value: member ? (STATUS_LABELS[status] || status) : '*Not in server (unavailable)*',
+          inline: true
+        }
+      ];
+
+      if (customStatus) {
+        fields.push({ name: 'Custom Status', value: `\`${customStatus}\``, inline: false });
+      }
+
+      fields.push({
+        name: 'Assets',
+        value: `[Avatar (PFP)](${avatarUrl})${bannerUrl ? ` • [Banner](${bannerUrl})` : ' • *No Banner*'}`,
+        inline: false
+      });
+
+      await sendLogEmbed({
+        title: '🔍 Profile Snapshot',
+        description: `Target: **${fullUser.username}** (\`${fullUser.id}\`)`,
+        color: 0xff99cc,
+        thumbnail: { url: avatarUrl },
+        image: bannerUrl ? { url: bannerUrl } : undefined,
+        fields,
+        timestamp: new Date().toISOString()
+      });
+
+      await interaction.editReply(`Sent **${fullUser.username}**'s profile snapshot to your webhook! :3`);
+    } catch {
+      await interaction.editReply('Could not find a Discord user with that ID! Make sure Developer Mode is on and you copied the numeric User ID, >_<');
+    }
   }
 
-  fields.push({
-    name: 'Assets',
-    value: `[Avatar (PFP)](${avatarUrl})${bannerUrl ? ` • [Banner](${bannerUrl})` : ' • *No Banner*'}`,
-    inline: false
-  });
+  if (interaction.commandName === 'track') {
+    await interaction.deferReply({ ephemeral: true });
+    const rawId = interaction.options.getString('user_id', true).replace(/[<@!>]/g, '').trim();
 
-  await sendLogEmbed({
-    title: '🔍 Manual Profile Snapshot',
-    description: `Target: <@${fullUser.id}> (\`${fullUser.id}\`)`,
-    color: 0xff99cc,
-    thumbnail: { url: avatarUrl },
-    image: bannerUrl ? { url: bannerUrl } : undefined,
-    fields,
-    timestamp: new Date().toISOString()
-  });
+    if (!/^\d{17,20}$/.test(rawId)) {
+      return interaction.editReply('Please enter a valid numeric Discord User ID! :3');
+    }
 
-  await interaction.editReply(`Sent **${fullUser.username}**'s profile & status snapshot to your webhook! :3`);
+    try {
+      const fullUser = await client.users.fetch(rawId, { force: true });
+      trackedUsers.set(rawId, buildSnapshot(fullUser));
+      await interaction.editReply(
+        `Now tracking **${fullUser.username}** (\`${rawId}\`) every 5 minutes for username, display name, PFP, and banner updates! :3\n*(Tip: Add \`${rawId}\` to \`TRACKED_USER_IDS\` in Render if you want it saved across restarts!)*`
+      );
+    } catch {
+      await interaction.editReply('Could not fetch that User ID—double-check that it is valid! >_<');
+    }
+  }
+
+  if (interaction.commandName === 'untrack') {
+    const rawId = interaction.options.getString('user_id', true).replace(/[<@!>]/g, '').trim();
+    const removed = trackedUsers.delete(rawId);
+    await interaction.reply({
+      content: removed ? `Stopped tracking \`${rawId}\`! :3` : `\`${rawId}\` wasn't on the tracking list, uwu`,
+      ephemeral: true
+    });
+  }
+
+  if (interaction.commandName === 'tracked') {
+    const ids = [...trackedUsers.keys()];
+    await interaction.reply({
+      content: ids.length
+        ? `**Currently tracked external User IDs (${ids.length}):**\n${ids.map((id) => `• \`${id}\``).join('\n')}`
+        : 'No external User IDs are being tracked yet! Use `/track user_id:...` to add someone :3',
+      ephemeral: true
+    });
+  }
 });
 
-// 5. Tiny HTTP Keep-Alive Server for Render's Free Web Service
+// 6. Tiny HTTP Keep-Alive Server for Render's Free Web Service
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
