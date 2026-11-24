@@ -387,7 +387,7 @@ async function fetchFurrySpecies(species = 'neko', logger = null) {
   return null;
 }
 
-// Fetch media from e621.net (with Basic Auth + e926.net fallback)
+// Fetch media from e621.net (with Basic Auth) + unauthenticated e926.net fallback
 async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
   const tagAliases = {
     sfw: 'rating:s',
@@ -412,19 +412,21 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
   const e621User = (process.env.E621_USERNAME || 'loomieaccount').trim();
   const e621Key = (process.env.E621_API_KEY || 'q8iuHtnR1XvvWaYKyVB55hyk').trim();
 
-  const headers = {
-    'User-Agent': `FurryDiscordBot/4.9 (by ${e621User} on e621)`,
+  const baseHeaders = {
+    'User-Agent': `FurryDiscordBot/5.0 (by ${e621User} on e621)`,
     'Accept': 'application/json'
   };
 
+  const authHeaders = { ...baseHeaders };
   if (e621User && e621Key) {
     const token = Buffer.from(`${e621User}:${e621Key}`).toString('base64');
-    headers['Authorization'] = `Basic ${token}`;
+    authHeaders['Authorization'] = `Basic ${token}`;
   }
 
+  // Only send e621 API key to e621.net; query e926.net without auth so it never throws HTTP 403
   const endpoints = [
-    { host: makeUrl('e621.net', '/posts.json'), tags: primaryTags },
-    { host: makeUrl('e926.net', '/posts.json'), tags: primaryTags }
+    { host: makeUrl('e621.net', '/posts.json'), tags: primaryTags, headers: authHeaders },
+    { host: makeUrl('e926.net', '/posts.json'), tags: primaryTags, headers: baseHeaders }
   ];
 
   logger?.log('E621:INIT', `Prepared Booru search query`, {
@@ -432,11 +434,11 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
     order,
     cleanedUserTags,
     authenticated: Boolean(e621User && e621Key),
-    userAgent: headers['User-Agent']
+    userAgent: baseHeaders['User-Agent']
   });
 
   for (let i = 0; i < endpoints.length; i++) {
-    const { host, tags } = endpoints[i];
+    const { host, tags, headers } = endpoints[i];
     const siteName = host.includes('e926') ? 'e926.net' : 'e621.net';
     const query = encodeURIComponent(tags.join(' '));
     const url = `${host}?limit=60&tags=${query}`;
@@ -457,13 +459,13 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
 
       if (!res.ok) {
         if (res.status === 401 || res.status === 403) {
-          logger?.explainIssue(`${siteName} rejected your login/API key (HTTP ${res.status}) — double-check that E621_USERNAME ("${e621User}") and E621_API_KEY are valid and your e621 email is activated.`);
+          logger?.explainIssue(`${siteName} rejected the request (HTTP ${res.status}) — make sure your e621 account email is activated in Gmail.`);
         } else if (res.status === 429) {
-          logger?.explainIssue(`${siteName} rate-limited the bot (HTTP 429 Too Many Requests) — wait a few seconds before rolling again.`);
+          logger?.explainIssue(`${siteName} rate-limited the bot (HTTP 429) — wait a few seconds before rolling again.`);
         } else if (res.status === 422) {
-          logger?.explainIssue(`${siteName} rejected the search tags (HTTP 422) — you may have searched too many tags at once or used an invalid tag syntax.`);
+          logger?.explainIssue(`${siteName} rejected the search tags (HTTP 422) — check tag syntax or reduce the number of tags.`);
         } else {
-          logger?.explainIssue(`${siteName} returned server error HTTP ${res.status}.`);
+          logger?.explainIssue(`${siteName} returned HTTP ${res.status}.`);
         }
         continue;
       }
@@ -493,12 +495,12 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
       });
 
       if (rawCount === 0) {
-        logger?.explainIssue(`${siteName} responded OK, but found 0 posts matching \`${cleanedUserTags.join(' ') || 'your query'}\` (check spelling, use underscores like \`cat_boy\`, or make sure your e621 account email is activated).`);
+        logger?.explainIssue(`${siteName} responded OK, but found 0 posts matching \`${cleanedUserTags.join(' ') || 'your query'}\` (check tag spelling or activate your e621 account email).`);
         continue;
       }
 
       if (validPosts.length === 0) {
-        logger?.explainIssue(`${siteName} found ${rawCount} posts for \`${cleanedUserTags.join(' ')}\`, but all of them were \`.webm\`/\`.swf\` videos that Discord embeds cannot display inline.`);
+        logger?.explainIssue(`${siteName} found ${rawCount} posts for \`${cleanedUserTags.join(' ')}\`, but all of them were \`.webm\`/\`.swf\` videos.`);
         continue;
       }
 
@@ -531,7 +533,7 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
       return result;
     } catch (err) {
       logger?.log('HTTP:ERR', `Attempt #${i + 1} threw exception`, { error: err?.message || String(err) });
-      logger?.explainIssue(`Connection to ${siteName} failed or timed out after 8 seconds (${err?.message || 'network error'}).`);
+      logger?.explainIssue(`Connection to ${siteName} failed or timed out (${err?.message || 'network error'}).`);
     }
   }
 
