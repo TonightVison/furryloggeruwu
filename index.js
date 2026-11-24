@@ -21,6 +21,7 @@ const client = new Client({
 // Safe URL builder so clipboard extensions never turn URLs into Markdown links!
 const HTTPS = ['https:', ''].join('//');
 const makeUrl = (host, path = '') => `${HTTPS}${host}${path}`;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Loomie's User ID & Website
 const OWNER_ID = '1416390397881749514';
@@ -403,7 +404,7 @@ async function fetchFurrySpecies(species = 'neko', logger = null) {
   return null;
 }
 
-// Fetch media from e621.net (no rating:s filters and no order:random!)
+// Fetch media from e621.net (rate-limit safe 1.1s spacing + public/auth fallback)
 async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
   const cleanedUserTags = rawTags
     .split(/[\s,]+/)
@@ -427,7 +428,7 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
   const e621Key = (process.env.E621_API_KEY || 'q8iuHtnR1XvvWaYKyVB55hyk').trim();
 
   const baseHeaders = {
-    'User-Agent': `FurryDiscordBot/5.3 (by ${e621User} on e621)`,
+    'User-Agent': `FurryDiscordBot/5.4 (by ${e621User} on e621)`,
     'Accept': 'application/json'
   };
 
@@ -437,9 +438,11 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
     authHeaders['Authorization'] = `Basic ${token}`;
   }
 
+  // Try public e621.net first (bypasses new-account Safe Mode / blacklist filters),
+  // then authenticated e621.net after a 1.1s rate-limit pause if needed
   const attempts = [
-    { label: 'e621.net (auth)', host: makeUrl('e621.net', '/posts.json'), tags: apiTags, headers: authHeaders },
-    { label: 'e621.net (public)', host: makeUrl('e621.net', '/posts.json'), tags: apiTags, headers: baseHeaders }
+    { label: 'e621.net (public)', host: makeUrl('e621.net', '/posts.json'), tags: apiTags, headers: baseHeaders },
+    { label: 'e621.net (auth)', host: makeUrl('e621.net', '/posts.json'), tags: apiTags, headers: authHeaders }
   ];
 
   logger?.log('E621:INIT', `Prepared Booru search query`, {
@@ -452,6 +455,11 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
   });
 
   for (let i = 0; i < attempts.length; i++) {
+    if (i > 0) {
+      logger?.log('RATE_LIMIT:WAIT', `Waiting 1100ms before Attempt #${i + 1} to respect e621's 2 req/s limit`);
+      await sleep(1100);
+    }
+
     const { label, host, tags, headers } = attempts[i];
     const query = encodeURIComponent(tags.join(' '));
     const url = `${host}?limit=75&tags=${query}`;
@@ -504,11 +512,12 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
       logger?.log('E621:FILTER', `Filtered posts for valid extensions`, {
         label,
         rawPostCount: rawCount,
-        validPostCount: validPosts.length
+        validPostCount: validPosts.length,
+        responseKeys: Object.keys(data || {})
       });
 
       if (rawCount === 0) {
-        logger?.explainIssue(`${label} responded OK, but found 0 posts matching \`${cleanedUserTags.join(' ') || 'all posts'}\`.`);
+        logger?.explainIssue(`${label} responded OK, but found 0 posts matching \`${cleanedUserTags.join(' ') || 'all posts'}\` (check e621 Settings -> Account/Blacklist if logged in).`);
         continue;
       }
 
