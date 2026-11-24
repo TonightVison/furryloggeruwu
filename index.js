@@ -5,7 +5,6 @@ import {
   REST,
   Routes,
   SlashCommandBuilder,
-  WebhookClient,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
@@ -16,46 +15,30 @@ import http from 'node:http';
 import 'dotenv/config';
 
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildPresences
-  ]
+  intents: [GatewayIntentBits.Guilds]
 });
 
-const LOG_WEBHOOK_URL = process.env.LOG_WEBHOOK_URL;
-const UPTIME_WEBHOOK_URL = process.env.UPTIME_WEBHOOK_URL;
-const logWebhook = LOG_WEBHOOK_URL ? new WebhookClient({ url: LOG_WEBHOOK_URL }) : null;
-const uptimeWebhook = UPTIME_WEBHOOK_URL ? new WebhookClient({ url: UPTIME_WEBHOOK_URL }) : null;
+// In-memory affection counter: tracks how many times userA gave affection to userB
+const affectionCounts = new Map();
+let totalAffectionDelivered = 0;
 
-const POLL_INTERVAL_MS = 5 * 60 * 1000;
-
-// Load permanent tracked IDs from Render env var TRACKED_USER_IDS (comma-separated)
-const trackedUsers = new Map();
-if (process.env.TRACKED_USER_IDS) {
-  for (const rawId of process.env.TRACKED_USER_IDS.split(',')) {
-    const id = rawId.trim();
-    if (/^\d{17,20}$/.test(id)) {
-      trackedUsers.set(id, null);
-    }
-  }
+function recordAffection(fromId, toId) {
+  totalAffectionDelivered += 1;
+  const key = `${fromId}->${toId}`;
+  const next = (affectionCounts.get(key) || 0) + 1;
+  affectionCounts.set(key, next);
+  return next;
 }
-
-const UPTIME_TARGETS = [
-  { name: 'emolarp.fans (GitHub Pages)', url: 'https://emolarp.fans', isUp: true },
-  { name: 'emolarp-logger (Cloudflare Worker)', url: 'https://emolarp-logger.insanesservices.workers.dev', isUp: true }
-];
 
 // Mood-matched kaomoji pools :3
 const KAOMOJI = {
   online: ['ฅ^•ﻌ•^ฅ', '(=^･ω･^=)', '(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧', '(≧◡≦)', '(=^･ｪ･^=)', '٩(◕‿◕｡)۶'],
-  idle: ['(－_－) zzZ', '(￣o￣) . z Z', '(=^-ω-^=)', '(´꒳`)', '(◡ ‿ ◡ ✿)'],
-  dnd: ['(・`ω´・)', '(っ- ‸ – ς)', '(=`ω´=)', '(｡>﹏<｡)', '(*/ω\\)'],
-  offline: ['(－_－) zzZ', '(=；ェ；=)', '/ᐠ - ˕ -マ', '(´-ω-`)', '(；ω；)'],
   cute: ['(｡･ω･｡)', '(´｡• ᵕ •｡`)', '(=①ω①=)', '(●´ω｀●)', 'ﾐ・ﻌ・ﾐ', '/ᐠ｡ꞈ｡ᐟ\\'],
   snuggle: ['(つ≧▽≦)つ', '(づ｡◕‿‿◕｡)づ', '(⊃｡•́‿•̀｡)⊃', '(´,,•ω•,,)', '(* ^ ω ^)'],
   headpat: ['(´･･)ﾉ(._.\`)', '(っ´ω`)ﾉ(╥ω╥)', '(づ｡◕‿‿◕｡)づ', 'ฅ^•ﻌ•^ฅ'],
-  affection: ['(っ˘з(˘⌣˘ )', '(｡・//ε//・｡)', '(⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄)', '(´ε｀ )♡', '(*≧ω≦*)', '(´▽`ʃ♡ƪ)']
+  affection: ['(っ˘з(˘⌣˘ )', '(｡・//ε//・｡)', '(⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄)', '(´ε｀ )♡', '(*≧ω≦*)', '(´▽`ʃ♡ƪ)'],
+  playful: ['(=`ω´=)', '(・`ω´・)', 'ฅ^•ﻌ•^ฅ', '(≧◡≦)', '(*≧ω≦*)'],
+  blush: ['(｡・//ε//・｡)', '(⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄)', '(*/ω\\)', '(´,,•ω•,,)', '(´｡• ᵕ •｡`)']
 };
 
 function pick(category) {
@@ -63,45 +46,50 @@ function pick(category) {
   return list[Math.floor(Math.random() * list.length)];
 }
 
-function getStatusLabel(status) {
-  switch (status) {
-    case 'online':
-      return `[Online] Cozy & awake ${pick('online')}`;
-    case 'idle':
-      return `[Idle] Sleepy / AFK ${pick('idle')}`;
-    case 'dnd':
-      return `[DND] Busy / Do Not Disturb ${pick('dnd')}`;
-    default:
-      return `[Offline] Asleep ${pick('offline')}`;
-  }
-}
-
 const PASTEL_PINK = 0xff99cc;
 const PASTEL_PURPLE = 0xc792ea;
 const PASTEL_LAVENDER = 0xe0b0ff;
 
-// Fetch a cute furry/neko/anime action GIF from free public APIs
+// Fetch cute furry/neko or anime GIFs from PurrBot & Nekos.best
 async function fetchActionGif(action, vibe = 'furry') {
-  const endpointMap = {
+  const purrMap = {
     snuggle: 'cuddle',
+    hug: 'hug',
     lick: 'lick',
     kiss: 'kiss',
-    headpat: 'pat'
+    headpat: 'pat',
+    boop: 'poke',
+    bite: 'bite',
+    blush: 'blush',
+    tailwag: 'tail'
   };
-  const endpoint = endpointMap[action] || 'cuddle';
+
+  const nekosMap = {
+    snuggle: 'cuddle',
+    hug: 'hug',
+    lick: 'lick',
+    kiss: 'kiss',
+    headpat: 'pat',
+    boop: 'poke',
+    bite: 'bite',
+    blush: 'blush',
+    tailwag: 'happy'
+  };
 
   try {
-    if (vibe === 'furry') {
-      const purrMap = { snuggle: 'cuddle', lick: 'lick', kiss: 'kiss', headpat: 'pat' };
+    if (vibe === 'furry' && purrMap[action]) {
       const purrRes = await fetch(`https://api.purrbot.site/v2/img/sfw/${purrMap[action]}/gif`, {
         signal: AbortSignal.timeout(4000)
       });
       if (purrRes.ok) {
         const purrData = await purrRes.json();
-        if (purrData?.link) return { url: purrData.link, source: 'PurrBot Furry/Neko' };
+        if (purrData?.link) {
+          return { url: purrData.link, source: 'PurrBot Furry / Neko' };
+        }
       }
     }
 
+    const endpoint = nekosMap[action] || 'cuddle';
     const res = await fetch(`https://nekos.best/api/v2/${endpoint}`, {
       signal: AbortSignal.timeout(4000)
     });
@@ -116,64 +104,7 @@ async function fetchActionGif(action, vibe = 'furry') {
       }
     }
   } catch {
-    // Fallback gracefully
-  }
-  return null;
-}
-
-// Helper: Extract custom status & current game/Spotify activity
-function parseActivities(activities = []) {
-  let customStatus = null;
-  let currentActivity = null;
-
-  for (const a of activities) {
-    if (a.type === 4) {
-      const emoji = a.emoji ? `${a.emoji.name} ` : '';
-      customStatus = `${emoji}${a.state || ''}`.trim() || null;
-    } else if (a.name === 'Spotify' && a.details) {
-      currentActivity = `Listening to **${a.details}** by *${a.state || 'Unknown'}*`;
-    } else if (a.type === 0) {
-      currentActivity = `Playing **${a.name}**${a.details ? ` (${a.details})` : ''}`;
-    } else if (a.type === 1) {
-      currentActivity = `Streaming **${a.name}**`;
-    }
-  }
-
-  return { customStatus, currentActivity };
-}
-
-// Helper: Query Lanyard API as fallback for external users
-async function fetchLanyard(userId) {
-  try {
-    const res = await fetch(`https://api.lanyard.rest/v1/users/${userId}`);
-    if (!res.ok) return null;
-    const json = await res.json();
-    if (!json.success || !json.data) return null;
-
-    const d = json.data;
-    const { customStatus, currentActivity } = parseActivities(d.activities || []);
-    const platforms = [];
-    if (d.active_on_discord_desktop) platforms.push('Desktop');
-    if (d.active_on_discord_mobile) platforms.push('Mobile');
-    if (d.active_on_discord_web) platforms.push('Web');
-
-    return {
-      status: d.discord_status || 'offline',
-      customStatus,
-      currentActivity: d.listening_to_spotify && d.spotify
-        ? `Listening to **${d.spotify.song}** by *${d.spotify.artist}*`
-        : currentActivity,
-      platforms: platforms.length ? platforms.join(', ') : null
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function findMutualMember(userId) {
-  for (const guild of client.guilds.cache.values()) {
-    const member = guild.members.cache.get(userId) || await guild.members.fetch(userId).catch(() => null);
-    if (member) return member;
+    // Fallback gracefully so commands never fail
   }
   return null;
 }
@@ -204,260 +135,18 @@ function buildAssetButtons(avatarUrl, bannerUrl, decoUrl) {
   return [row];
 }
 
-async function sendCuteLog(embed, components = []) {
-  if (!logWebhook) {
-    console.warn('Missing LOG_WEBHOOK_URL!');
-    return;
-  }
-  await logWebhook.send({
-    username: 'furry • thigh-high patrol :3',
-    embeds: [
-      {
-        ...embed,
-        footer: { text: `furry logger • paws & thigh-highs certified ${pick('cute')}` }
-      }
-    ],
-    components
-  }).catch(console.error);
-}
+const addVibeOption = (opt) =>
+  opt
+    .setName('vibe')
+    .setDescription('Pick furry/neko or anime GIF style! :3')
+    .setRequired(false)
+    .addChoices(
+      { name: 'Furry / Neko (PurrBot) :3', value: 'furry' },
+      { name: 'Kemonomimi / Anime (Nekos.best) ^w^', value: 'anime' }
+    );
 
-function buildSnapshot(user, lanyard = null) {
-  return {
-    username: user.username,
-    globalName: user.globalName || null,
-    avatarUrl: user.displayAvatarURL({ size: 512 }),
-    bannerUrl: user.bannerURL({ size: 1024 }) || null,
-    decoUrl: user.avatarDecorationURL({ size: 512 }) || null,
-    lanyardStatus: lanyard?.status || null,
-    lanyardCustom: lanyard?.customStatus || null
-  };
-}
-
-// 1. Live Status, Custom Status & Game/Spotify Logger
-client.on(Events.PresenceUpdate, async (oldPresence, newPresence) => {
-  const member = newPresence.member;
-  if (!member || member.user.bot) return;
-
-  const oldStatus = oldPresence?.status || 'offline';
-  const newStatus = newPresence.status || 'offline';
-  const oldAct = parseActivities(oldPresence?.activities);
-  const newAct = parseActivities(newPresence.activities);
-
-  if (
-    oldStatus === newStatus &&
-    oldAct.customStatus === newAct.customStatus &&
-    oldAct.currentActivity === newAct.currentActivity
-  ) {
-    return;
-  }
-
-  const fullUser = await member.user.fetch(true).catch(() => member.user);
-  const avatarUrl = fullUser.displayAvatarURL({ size: 512 });
-  const bannerUrl = fullUser.bannerURL({ size: 1024 });
-  const decoUrl = fullUser.avatarDecorationURL({ size: 512 });
-
-  const moodKaomoji = pick(newStatus in KAOMOJI ? newStatus : 'cute');
-
-  const fields = [
-    {
-      name: 'Vibe / Status',
-      value: `${getStatusLabel(oldStatus)} -> **${getStatusLabel(newStatus)}**`,
-      inline: true
-    },
-    {
-      name: 'Server',
-      value: `\`${member.guild.name}\``,
-      inline: true
-    }
-  ];
-
-  if (newAct.customStatus) {
-    fields.push({ name: 'Custom Status', value: `\`${newAct.customStatus}\``, inline: false });
-  }
-  if (newAct.currentActivity) {
-    fields.push({ name: 'Activity', value: newAct.currentActivity, inline: false });
-  }
-
-  await sendCuteLog(
-    {
-      title: `Cutie Status Update~ ${moodKaomoji}`,
-      description: `*ears perk up!* **${fullUser.username}** (<@${fullUser.id}>) updated their status, uwu~`,
-      color: PASTEL_PINK,
-      thumbnail: { url: avatarUrl },
-      image: bannerUrl ? { url: bannerUrl } : undefined,
-      fields,
-      timestamp: new Date().toISOString()
-    },
-    buildAssetButtons(avatarUrl, bannerUrl, decoUrl)
-  );
-});
-
-// 2. Live Profile Logger
-client.on(Events.UserUpdate, async (oldUser, newUser) => {
-  if (newUser.bot) return;
-
-  const fullNew = await newUser.fetch(true).catch(() => newUser);
-  const oldAvatar = oldUser.displayAvatarURL({ size: 512 });
-  const newAvatar = fullNew.displayAvatarURL({ size: 512 });
-  const oldBanner = oldUser.bannerURL({ size: 1024 });
-  const newBanner = fullNew.bannerURL({ size: 1024 });
-  const oldDeco = oldUser.avatarDecorationURL({ size: 512 });
-  const newDeco = fullNew.avatarDecorationURL({ size: 512 });
-
-  const changes = [];
-  if (oldUser.username !== fullNew.username) {
-    changes.push(`**Username:** \`${oldUser.username}\` -> \`${fullNew.username}\``);
-  }
-  if (oldUser.globalName !== fullNew.globalName) {
-    changes.push(`**Display Name:** \`${oldUser.globalName || 'None'}\` -> \`${fullNew.globalName || 'None'}\``);
-  }
-  if (oldAvatar !== newAvatar) {
-    changes.push(`**Avatar (PFP):** Fresh new look! ${pick('cute')}`);
-  }
-  if (oldBanner !== newBanner) {
-    changes.push(newBanner ? `**Banner:** Updated to a cute new banner! ^w^` : `**Banner:** Removed ${pick('offline')}`);
-  }
-  if (oldDeco !== newDeco) {
-    changes.push(newDeco ? `**Avatar Decoration:** Equipped new decoration! :3` : `**Avatar Decoration:** Removed`);
-  }
-
-  if (changes.length === 0) return;
-
-  await sendCuteLog(
-    {
-      title: `Profile Makeover Alert~ ${pick('cute')}`,
-      description: `*tail wags happily!* **${fullNew.username}** (<@${fullNew.id}>) changed their profile:\n\n${changes.join('\n')}`,
-      color: PASTEL_PURPLE,
-      thumbnail: { url: newAvatar },
-      image: newBanner ? { url: newBanner } : undefined,
-      timestamp: new Date().toISOString()
-    },
-    buildAssetButtons(newAvatar, newBanner, newDeco)
-  );
-});
-
-// 3. Server Nickname & Boost Logger
-client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
-  if (newMember.user.bot) return;
-  const changes = [];
-
-  if (oldMember.nickname !== newMember.nickname) {
-    changes.push(`**Server Nickname:** \`${oldMember.nickname || 'None'}\` -> \`${newMember.nickname || 'None'}\``);
-  }
-  if (!oldMember.premiumSince && newMember.premiumSince) {
-    changes.push(`**Server Boosted!** Give them extra headpats & thigh-highs!! ${pick('affection')}`);
-  }
-
-  if (changes.length === 0) return;
-
-  const avatarUrl = newMember.displayAvatarURL({ size: 512 });
-  await sendCuteLog({
-    title: `Server Member Update~ ${pick('cute')}`,
-    description: `**${newMember.user.username}** (<@${newMember.id}>) in **${newMember.guild.name}**:\n\n${changes.join('\n')}`,
-    color: PASTEL_LAVENDER,
-    thumbnail: { url: avatarUrl },
-    timestamp: new Date().toISOString()
-  });
-});
-
-// 4. Poll External Tracked Users
-async function pollTrackedUsers() {
-  for (const [userId, prev] of trackedUsers.entries()) {
-    try {
-      const fullUser = await client.users.fetch(userId, { force: true });
-      const lanyard = await fetchLanyard(userId);
-      const current = buildSnapshot(fullUser, lanyard);
-
-      if (!prev) {
-        trackedUsers.set(userId, current);
-        continue;
-      }
-
-      const changes = [];
-      if (prev.username !== current.username) {
-        changes.push(`**Username:** \`${prev.username}\` -> \`${current.username}\``);
-      }
-      if (prev.globalName !== current.globalName) {
-        changes.push(`**Display Name:** \`${prev.globalName || 'None'}\` -> \`${current.globalName || 'None'}\``);
-      }
-      if (prev.avatarUrl !== current.avatarUrl) {
-        changes.push(`**Avatar (PFP):** Updated! ${pick('cute')}`);
-      }
-      if (prev.bannerUrl !== current.bannerUrl) {
-        changes.push(current.bannerUrl ? `**Banner:** Updated! ^w^` : `**Banner:** Removed ${pick('offline')}`);
-      }
-      if (prev.decoUrl !== current.decoUrl) {
-        changes.push(current.decoUrl ? `**Avatar Decoration:** Updated! :3` : `**Avatar Decoration:** Removed`);
-      }
-      if (lanyard && prev.lanyardStatus && prev.lanyardStatus !== current.lanyardStatus) {
-        changes.push(`**Lanyard Status:** ${getStatusLabel(prev.lanyardStatus)} -> **${getStatusLabel(current.lanyardStatus)}**`);
-      }
-      if (lanyard && prev.lanyardCustom !== current.lanyardCustom) {
-        changes.push(`**Lanyard Custom Status:** \`${current.lanyardCustom || 'Cleared'}\``);
-      }
-
-      trackedUsers.set(userId, current);
-
-      if (changes.length > 0) {
-        await sendCuteLog(
-          {
-            title: `External Cutie Updated~ ${pick('cute')}`,
-            description: `*paws at the air!* **${current.username}** (\`${userId}\`) updated:\n\n${changes.join('\n')}`,
-            color: PASTEL_PURPLE,
-            thumbnail: { url: current.avatarUrl },
-            image: current.bannerUrl ? { url: current.bannerUrl } : undefined,
-            timestamp: new Date().toISOString()
-          },
-          buildAssetButtons(current.avatarUrl, current.bannerUrl, current.decoUrl)
-        );
-      }
-    } catch (err) {
-      console.error(`Failed to fetch tracked user ${userId}:`, err.message);
-    }
-  }
-}
-
-// 5. Optional emolarp.fans Uptime Monitor
-async function checkWebsiteUptime() {
-  if (!uptimeWebhook) return;
-  for (const target of UPTIME_TARGETS) {
-    const start = Date.now();
-    try {
-      const res = await fetch(target.url, { signal: AbortSignal.timeout(10000) });
-      const ms = Date.now() - start;
-      if (res.ok && !target.isUp) {
-        target.isUp = true;
-        await uptimeWebhook.send({
-          username: 'furry uptime monitor :3',
-          embeds: [{
-            title: `Back Online! • ${target.name} ${pick('online')}`,
-            description: `*tail wags happily!* Recovered with HTTP **${res.status}** (${ms}ms) uwu~`,
-            color: PASTEL_PINK,
-            timestamp: new Date().toISOString()
-          }]
-        }).catch(console.error);
-      } else if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-    } catch (err) {
-      if (target.isUp) {
-        target.isUp = false;
-        await uptimeWebhook.send({
-          username: 'furry uptime monitor :3',
-          embeds: [{
-            title: `Service Down! • ${target.name} ${pick('offline')}`,
-            description: `*ears droop!* Couldn't reach \`${target.url}\` (\`${err.message}\`)`,
-            color: PASTEL_PURPLE,
-            timestamp: new Date().toISOString()
-          }]
-        }).catch(console.error);
-      }
-    }
-  }
-}
-
-// Helper to enable all commands in Servers, Bot DMs, and Private/Group DMs!
-function enableEverywhere(builder) {
+// Enable Server, Bot DM, Group DM & User-Install contexts everywhere
+function makeEverywhere(builder) {
   return builder
     .setIntegrationTypes(
       ApplicationIntegrationType.GuildInstall,
@@ -471,60 +160,13 @@ function enableEverywhere(builder) {
     .toJSON();
 }
 
-const addVibeOption = (opt) =>
-  opt
-    .setName('vibe')
-    .setDescription('Pick furry/neko or anime GIF style! :3')
-    .setRequired(false)
-    .addChoices(
-      { name: 'Furry / Neko (PurrBot) :3', value: 'furry' },
-      { name: 'Kemonomimi / Anime (Nekos.best) ^w^', value: 'anime' }
-    );
-
-// 6. Register All Slash Commands (Enabled in DMs + Servers!)
+// Register Slash Commands
 client.once(Events.ClientReady, async () => {
   console.log(`furry online as ${client.user.tag} :3`);
-  client.user.setActivity('paws & thigh-highs :3', { type: 3 });
+  client.user.setActivity('paws, snuggles & thigh-highs :3', { type: 3 });
 
   const commands = [
-    enableEverywhere(
-      new SlashCommandBuilder()
-        .setName('lookup')
-        .setDescription('Log any user PFP, banner, decoration & status (mutual server or Lanyard) :3')
-        .addStringOption((opt) =>
-          opt.setName('user_id').setDescription('Discord User ID or @mention').setRequired(true)
-        )
-    ),
-    enableEverywhere(
-      new SlashCommandBuilder()
-        .setName('avatar')
-        .setDescription('Show a cutie HD PFP, banner & avatar decoration right in chat! uwu')
-        .addStringOption((opt) =>
-          opt.setName('user_id').setDescription('Discord User ID or @mention (defaults to you!)').setRequired(false)
-        )
-    ),
-    enableEverywhere(
-      new SlashCommandBuilder()
-        .setName('track')
-        .setDescription('Add a User ID to monitor profile & Lanyard updates every 5 mins ^w^')
-        .addStringOption((opt) =>
-          opt.setName('user_id').setDescription('Discord User ID to watch').setRequired(true)
-        )
-    ),
-    enableEverywhere(
-      new SlashCommandBuilder()
-        .setName('untrack')
-        .setDescription('Stop tracking an external User ID >_<')
-        .addStringOption((opt) =>
-          opt.setName('user_id').setDescription('Discord User ID to remove').setRequired(true)
-        )
-    ),
-    enableEverywhere(
-      new SlashCommandBuilder()
-        .setName('tracked')
-        .setDescription('See all external User IDs furry is watching~ :3')
-    ),
-    enableEverywhere(
+    makeEverywhere(
       new SlashCommandBuilder()
         .setName('snuggle')
         .setDescription('Wrap a cutie in cozy oversized-hoodie & thigh-high snuggles uwu!')
@@ -533,7 +175,16 @@ client.once(Events.ClientReady, async () => {
         )
         .addStringOption(addVibeOption)
     ),
-    enableEverywhere(
+    makeEverywhere(
+      new SlashCommandBuilder()
+        .setName('hug')
+        .setDescription('Give a cutie a big, warm, fluffy hug~ ^w^')
+        .addUserOption((opt) =>
+          opt.setName('cutie').setDescription('Who needs a warm hug? :3').setRequired(true)
+        )
+        .addStringOption(addVibeOption)
+    ),
+    makeEverywhere(
       new SlashCommandBuilder()
         .setName('lick')
         .setDescription('Give a cutie a playful catboy/puppy lick~ nya!')
@@ -542,7 +193,7 @@ client.once(Events.ClientReady, async () => {
         )
         .addStringOption(addVibeOption)
     ),
-    enableEverywhere(
+    makeEverywhere(
       new SlashCommandBuilder()
         .setName('kiss')
         .setDescription('Give a cutie a sweet pastel forehead or cheek kiss~ ^w^')
@@ -551,7 +202,7 @@ client.once(Events.ClientReady, async () => {
         )
         .addStringOption(addVibeOption)
     ),
-    enableEverywhere(
+    makeEverywhere(
       new SlashCommandBuilder()
         .setName('headpat')
         .setDescription('Give a cutie cozy headpats and paw boops uwu!')
@@ -560,145 +211,93 @@ client.once(Events.ClientReady, async () => {
         )
         .addStringOption(addVibeOption)
     ),
-    enableEverywhere(
+    makeEverywhere(
+      new SlashCommandBuilder()
+        .setName('boop')
+        .setDescription('Boop a cutie right on the snoot with a soft paw~ :3')
+        .addUserOption((opt) =>
+          opt.setName('cutie').setDescription('Whose nose are we booping? >w<').setRequired(true)
+        )
+        .addStringOption(addVibeOption)
+    ),
+    makeEverywhere(
+      new SlashCommandBuilder()
+        .setName('bite')
+        .setDescription('Give a cutie a playful little catboy love-nibble~ nom!')
+        .addUserOption((opt) =>
+          opt.setName('cutie').setDescription('Who gets a gentle nibble? :3').setRequired(true)
+        )
+        .addStringOption(addVibeOption)
+    ),
+    makeEverywhere(
+      new SlashCommandBuilder()
+        .setName('blush')
+        .setDescription('Get all flustered and red-faced uwu~')
+        .addUserOption((opt) =>
+          opt.setName('cutie').setDescription('Optional: who made you blush? >w<').setRequired(false)
+        )
+        .addStringOption(addVibeOption)
+    ),
+    makeEverywhere(
+      new SlashCommandBuilder()
+        .setName('tailwag')
+        .setDescription('Wag your tail happily like an excited puppy/catboy~ :3')
+        .addUserOption((opt) =>
+          opt.setName('cutie').setDescription('Optional: who are you wagging your tail at? ^w^').setRequired(false)
+        )
+        .addStringOption(addVibeOption)
+    ),
+    makeEverywhere(
+      new SlashCommandBuilder()
+        .setName('lovecount')
+        .setDescription('Check how much affection you have given a cutie~ :3')
+        .addUserOption((opt) =>
+          opt.setName('cutie').setDescription('Check affection count for this cutie!').setRequired(true)
+        )
+    ),
+    makeEverywhere(
+      new SlashCommandBuilder()
+        .setName('avatar')
+        .setDescription('Show a cutie HD PFP, banner & avatar decoration right in chat! uwu')
+        .addStringOption((opt) =>
+          opt.setName('user_id').setDescription('Discord User ID or @mention (defaults to you!)').setRequired(false)
+        )
+    ),
+    makeEverywhere(
       new SlashCommandBuilder()
         .setName('stats')
-        .setDescription('Check furry uptime, ping & tracked cuties! :3')
+        .setDescription('Check furry uptime, ping & total affection delivered! :3')
     )
   ];
 
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   await rest.put(Routes.applicationCommands(client.user.id), { body: commands }).catch(console.error);
-
-  await pollTrackedUsers();
-  await checkWebsiteUptime();
-  setInterval(pollTrackedUsers, POLL_INTERVAL_MS);
-  setInterval(checkWebsiteUptime, POLL_INTERVAL_MS);
 });
 
-// 7. Handle All Slash Commands
+// Handle Slash Commands
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
-  // /lookup & /avatar
-  if (interaction.commandName === 'lookup' || interaction.commandName === 'avatar') {
-    const isLookup = interaction.commandName === 'lookup';
-    await interaction.deferReply({ ephemeral: isLookup });
+  const targetActions = ['snuggle', 'hug', 'lick', 'kiss', 'headpat', 'boop', 'bite'];
+  const soloActions = ['blush', 'tailwag'];
 
-    const rawInput = interaction.options.getString('user_id');
-    const rawId = rawInput ? rawInput.replace(/[<@!>]/g, '').trim() : interaction.user.id;
-
-    try {
-      const fullUser = await client.users.fetch(rawId, { force: true });
-      const mutualMember = await findMutualMember(fullUser.id);
-      const lanyard = !mutualMember ? await fetchLanyard(fullUser.id) : null;
-
-      let statusText = `*Not in a mutual server or Lanyard ${pick('offline')}*`;
-      let customText = null;
-      let activityText = null;
-
-      if (mutualMember) {
-        const s = mutualMember.presence?.status || 'offline';
-        const parsed = parseActivities(mutualMember.presence?.activities);
-        statusText = `${getStatusLabel(s)} *(via ${mutualMember.guild.name})*`;
-        customText = parsed.customStatus;
-        activityText = parsed.currentActivity;
-      } else if (lanyard) {
-        statusText = `${getStatusLabel(lanyard.status)} *(via Lanyard${lanyard.platforms ? ` • ${lanyard.platforms}` : ''})*`;
-        customText = lanyard.customStatus;
-        activityText = lanyard.currentActivity;
-      }
-
-      const avatarUrl = fullUser.displayAvatarURL({ size: 512 });
-      const bannerUrl = fullUser.bannerURL({ size: 1024 });
-      const decoUrl = fullUser.avatarDecorationURL({ size: 512 });
-
-      const fields = [
-        { name: 'Username', value: `\`${fullUser.username}\``, inline: true },
-        { name: 'Display Name', value: `\`${fullUser.globalName || 'None'}\``, inline: true },
-        { name: 'Status', value: statusText, inline: false }
-      ];
-
-      if (customText) fields.push({ name: 'Custom Status', value: `\`${customText}\``, inline: false });
-      if (activityText) fields.push({ name: 'Activity', value: activityText, inline: false });
-
-      const embed = {
-        title: isLookup ? `Cutie Profile Snapshot~ ${pick('cute')}` : `${fullUser.username}'s Lookbook~ ${pick('cute')}`,
-        description: `*ears perk up!* Target: **${fullUser.username}** (\`${fullUser.id}\`)`,
-        color: PASTEL_PINK,
-        thumbnail: { url: avatarUrl },
-        image: bannerUrl ? { url: bannerUrl } : undefined,
-        fields,
-        timestamp: new Date().toISOString()
-      };
-
-      const buttons = buildAssetButtons(avatarUrl, bannerUrl, decoUrl);
-
-      if (isLookup) {
-        await sendCuteLog(embed, buttons);
-        await interaction.editReply(`*tail wags happily!* Sent **${fullUser.username}**'s profile & status snapshot to your webhook, uwu~ ${pick('online')}`);
-      } else {
-        await interaction.editReply({ embeds: [embed], components: buttons });
-      }
-    } catch {
-      await interaction.editReply(`Awr~ I couldn’t find anyone with that ID! Make sure Developer Mode is on and copy the numeric User ID, ${pick('offline')}`);
-    }
-  }
-
-  // /track
-  if (interaction.commandName === 'track') {
-    await interaction.deferReply({ ephemeral: true });
-    const rawId = interaction.options.getString('user_id', true).replace(/[<@!>]/g, '').trim();
-
-    if (!/^\d{17,20}$/.test(rawId)) {
-      return interaction.editReply(`Nya~ Please paste a valid numeric Discord User ID! ${pick('cute')}`);
-    }
-
-    try {
-      const fullUser = await client.users.fetch(rawId, { force: true });
-      const lanyard = await fetchLanyard(rawId);
-      trackedUsers.set(rawId, buildSnapshot(fullUser, lanyard));
-      await interaction.editReply(
-        `*paws at the air!* Now watching **${fullUser.username}** (\`${rawId}\`) every 5 mins${lanyard ? ` (with Lanyard status active!! ${pick('online')})` : ''}! :3\n*(Tip: Add \`${rawId}\` to \`TRACKED_USER_IDS\` in Render so it stays saved across restarts, uwu~)*`
-      );
-    } catch {
-      await interaction.editReply(`Awr~ Couldn’t fetch that User ID—double-check the numbers for me! ${pick('offline')}`);
-    }
-  }
-
-  // /untrack
-  if (interaction.commandName === 'untrack') {
-    const rawId = interaction.options.getString('user_id', true).replace(/[<@!>]/g, '').trim();
-    const removed = trackedUsers.delete(rawId);
-    await interaction.reply({
-      content: removed ? `*tail swishes* Stopped watching \`${rawId}\`, uwu~ ${pick('cute')}` : `\`${rawId}\` wasn't on my watch list, nya~`,
-      ephemeral: true
-    });
-  }
-
-  // /tracked
-  if (interaction.commandName === 'tracked') {
-    const ids = [...trackedUsers.keys()];
-    await interaction.reply({
-      content: ids.length
-        ? `**Cuties I'm watching (${ids.length}) ${pick('cute')}:**\n${ids.map((id) => `• \`${id}\``).join('\n')}`
-        : `No external User IDs on my watch list yet! Use \`/track user_id:...\` to add a cutie~ ${pick('cute')}`,
-      ephemeral: true
-    });
-  }
-
-  // Cute Furry/Anime Action Commands with Mood-Matched Kaomojis!
-  if (['snuggle', 'lick', 'kiss', 'headpat'].includes(interaction.commandName)) {
+  // Target Action Commands
+  if (targetActions.includes(interaction.commandName)) {
     await interaction.deferReply();
     const action = interaction.commandName;
     const cutie = interaction.options.getUser('cutie', true);
     const vibe = interaction.options.getString('vibe') || 'furry';
     const gif = await fetchActionGif(action, vibe);
+    const count = recordAffection(interaction.user.id, cutie.id);
 
     const copyMap = {
       snuggle: {
         title: `Cozy Snuggle Pile~!! ${pick('snuggle')}`,
         text: `*adjusts oversized pastel hoodie & striped thigh-highs, curling up close*\n\n<@${interaction.user.id}> wraps <@${cutie.id}> in the warmest, fluffiest snuggles and gentle tail-wraps!! ${pick('snuggle')}`
+      },
+      hug: {
+        title: `Warm Fluffy Hug~!! ${pick('snuggle')}`,
+        text: `*opens arms wide and rushes in for a big squeeze*\n\n<@${interaction.user.id}> pulls <@${cutie.id}> into the tightest, coziest hug ever!! ${pick('snuggle')}`
       },
       lick: {
         title: `Playful Paw & Cheek Lick~ ${pick('affection')}`,
@@ -711,6 +310,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
       headpat: {
         title: `Cozy Headpat Delivery~!! ${pick('headpat')}`,
         text: `*adjusts striped thigh-highs and reaches up on tiptoes*\n\n<@${interaction.user.id}> gives <@${cutie.id}> the softest, warmest headpats and gentle paw-boops!! ${pick('headpat')}`
+      },
+      boop: {
+        title: `Soft Paw Snoot-Boop~!! ${pick('playful')}`,
+        text: `*reaches out a soft paw pad and gently pokes*\n\n*boop!!* <@${interaction.user.id}> boops <@${cutie.id}> right on the nose!! ${pick('playful')}`
+      },
+      bite: {
+        title: `Playful Love-Nibble~ nom! ${pick('playful')}`,
+        text: `*ears flatten playfully and leans in close*\n\n*nom~!* <@${interaction.user.id}> gives <@${cutie.id}> a gentle, playful little catboy nibble!! ${pick('playful')}`
       }
     };
 
@@ -718,7 +325,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await interaction.editReply({
       embeds: [{
         title: chosen.title,
-        description: chosen.text,
+        description: `${chosen.text}\n\n*Affection combo with <@${cutie.id}>: **${count}** time${count === 1 ? '' : 's'}! ^w^*`,
         color: PASTEL_PINK,
         thumbnail: { url: cutie.displayAvatarURL({ size: 256 }) },
         image: gif?.url ? { url: gif.url } : undefined,
@@ -731,6 +338,91 @@ client.on(Events.InteractionCreate, async (interaction) => {
     });
   }
 
+  // Solo / Optional-Target Reaction Commands (/blush, /tailwag)
+  if (soloActions.includes(interaction.commandName)) {
+    await interaction.deferReply();
+    const action = interaction.commandName;
+    const cutie = interaction.options.getUser('cutie');
+    const vibe = interaction.options.getString('vibe') || 'furry';
+    const gif = await fetchActionGif(action, vibe);
+
+    let title = '';
+    let description = '';
+
+    if (action === 'blush') {
+      title = `Flustered & Blushing~!! ${pick('blush')}`;
+      description = cutie
+        ? `*hides face inside oversized pastel hoodie sleeves*\n\n<@${cutie.id}> made <@${interaction.user.id}> blush super bright pink!! ${pick('blush')}`
+        : `*pulls hoodie sleeves over hands and looks away*\n\n<@${interaction.user.id}> is blushing so hard right now, uwu~!! ${pick('blush')}`;
+    } else {
+      title = `Happy Tail Wags~!! ${pick('online')}`;
+      description = cutie
+        ? `*ears perk up straight and tail swishes back and forth at max speed*\n\n<@${interaction.user.id}> is wagging their tail super happily at <@${cutie.id}>!! ${pick('online')}`
+        : `*bounces on tiptoes in striped thigh-highs*\n\n<@${interaction.user.id}> can't stop wagging their tail happily!! ${pick('online')}`;
+    }
+
+    await interaction.editReply({
+      embeds: [{
+        title,
+        description,
+        color: PASTEL_LAVENDER,
+        thumbnail: { url: (cutie || interaction.user).displayAvatarURL({ size: 256 }) },
+        image: gif?.url ? { url: gif.url } : undefined,
+        footer: {
+          text: gif?.source
+            ? `${gif.source} • paws & thigh-highs certified :3`
+            : 'paws & thigh-highs certified uwu :3'
+        }
+      }]
+    });
+  }
+
+  // /lovecount
+  if (interaction.commandName === 'lovecount') {
+    const cutie = interaction.options.getUser('cutie', true);
+    const count = affectionCounts.get(`${interaction.user.id}->${cutie.id}`) || 0;
+    await interaction.reply({
+      embeds: [{
+        title: `Affection Meter~ ${pick('affection')}`,
+        description: `*tail wags happily!*\n\n<@${interaction.user.id}> has snuggled, hugged, kissed, licked, booped, nibbled, or headpatted <@${cutie.id}> **${count}** time${count === 1 ? '' : 's'}! ${pick('cute')}`,
+        color: PASTEL_PINK,
+        thumbnail: { url: cutie.displayAvatarURL({ size: 256 }) }
+      }]
+    });
+  }
+
+  // /avatar
+  if (interaction.commandName === 'avatar') {
+    await interaction.deferReply();
+    const rawInput = interaction.options.getString('user_id');
+    const rawId = rawInput ? rawInput.replace(/[<@!>]/g, '').trim() : interaction.user.id;
+
+    try {
+      const fullUser = await client.users.fetch(rawId, { force: true });
+      const avatarUrl = fullUser.displayAvatarURL({ size: 512 });
+      const bannerUrl = fullUser.bannerURL({ size: 1024 });
+      const decoUrl = fullUser.avatarDecorationURL({ size: 512 });
+
+      await interaction.editReply({
+        embeds: [{
+          title: `${fullUser.username}'s Lookbook~ ${pick('cute')}`,
+          description: `*ears perk up!* Showing **${fullUser.username}** (\`${fullUser.id}\`), uwu~`,
+          color: PASTEL_PURPLE,
+          thumbnail: { url: avatarUrl },
+          image: bannerUrl ? { url: bannerUrl } : undefined,
+          fields: [
+            { name: 'Username', value: `\`${fullUser.username}\``, inline: true },
+            { name: 'Display Name', value: `\`${fullUser.globalName || 'None'}\``, inline: true }
+          ],
+          timestamp: new Date().toISOString()
+        }],
+        components: buildAssetButtons(avatarUrl, bannerUrl, decoUrl)
+      });
+    } catch {
+      await interaction.editReply(`Awr~ I couldn’t find anyone with that ID! Make sure Developer Mode is on and copy the numeric User ID, >_<`);
+    }
+  }
+
   // /stats
   if (interaction.commandName === 'stats') {
     const uptimeSec = Math.floor(process.uptime());
@@ -739,12 +431,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await interaction.reply({
       embeds: [{
         title: `furry Status & Paw-formance~ ${pick('online')}`,
-        description: '*tail wags happily!* Everything is cozy and running smoothly, uwu~',
+        description: '*tail wags happily!* Cozy, awake, and ready for snuggles in DMs and servers, uwu~',
         color: PASTEL_LAVENDER,
         fields: [
           { name: 'Ping', value: `\`${client.ws.ping}ms\``, inline: true },
           { name: 'Awake For', value: `\`${hrs}h ${mins % 60}m\``, inline: true },
-          { name: 'Servers / Tracked', value: `\`${client.guilds.cache.size}\` servers • \`${trackedUsers.size}\` IDs`, inline: true }
+          { name: 'Total Affection Given', value: `\`${totalAffectionDelivered}\` combos ${pick('affection')}`, inline: true }
         ]
       }],
       ephemeral: true
@@ -752,14 +444,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-// 8. Tiny HTTP Keep-Alive Server for Render + UptimeRobot
+// Tiny HTTP Keep-Alive Server for Render + UptimeRobot
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({
     status: `awake ${pick('online')}`,
     bot: client.user?.tag || 'booting...',
-    trackedUsers: trackedUsers.size,
+    totalAffectionDelivered,
     uptimeSeconds: Math.floor(process.uptime())
   }));
 }).listen(PORT, () => {
