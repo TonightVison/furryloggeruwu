@@ -52,8 +52,8 @@ class VerboseLogger {
     this.startTime = performance.now();
     this.startIso = new Date().toISOString();
     this.entries = [];
-    this.issues = [];   // Plain-English warnings or failures
-    this.successes = []; // Plain-English milestones that worked
+    this.issues = [];
+    this.successes = [];
   }
 
   explainIssue(plainEnglish) {
