@@ -30,7 +30,7 @@ const OC_IMAGE_URL = (process.env.OC_IMAGE_URL || '').trim();
 // In-memory affection counter & most recent /e621 query tracker
 const affectionCounts = new Map();
 let totalAffectionDelivered = 0;
-let lastE621Query = { tags: '', order: 'random', ranAt: null };
+let lastE621Query = { tags: '', order: 'newest', ranAt: null };
 
 function recordAffection(fromId, toId) {
   totalAffectionDelivered += 1;
@@ -403,26 +403,23 @@ async function fetchFurrySpecies(species = 'neko', logger = null) {
   return null;
 }
 
-// Fetch media from e621.net (avoiding broken order:random API quirk & clearing stale warnings on success)
-async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
-  const tagAliases = {
-    sfw: 'rating:s',
-    safe: 'rating:s',
-    nsfw: '-rating:s',
-    explicit: 'rating:e',
-    questionable: 'rating:q'
-  };
-
+// Fetch media from e621.net (no rating:s filters and no order:random!)
+async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
   const cleanedUserTags = rawTags
     .split(/[\s,]+/)
     .map((t) => t.trim().toLowerCase())
-    .filter((t) => t && !t.startsWith('order:'))
-    .map((t) => tagAliases[t] || t);
+    .filter(
+      (t) =>
+        t &&
+        !t.startsWith('order:') &&
+        !t.startsWith('rating:') &&
+        t !== 'sfw' &&
+        t !== 'safe' &&
+        t !== 'random'
+    );
 
   const allowedExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
 
-  // Avoid passing order:random directly to e621 API (which often returns empty posts:[] on API requests);
-  // instead fetch a pool of 75 posts and pick randomly in JS!
   const apiTags = [...cleanedUserTags];
   if (order === 'score') apiTags.push('order:score');
 
@@ -430,7 +427,7 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
   const e621Key = (process.env.E621_API_KEY || 'q8iuHtnR1XvvWaYKyVB55hyk').trim();
 
   const baseHeaders = {
-    'User-Agent': `FurryDiscordBot/5.2 (by ${e621User} on e621)`,
+    'User-Agent': `FurryDiscordBot/5.3 (by ${e621User} on e621)`,
     'Accept': 'application/json'
   };
 
@@ -440,12 +437,9 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
     authHeaders['Authorization'] = `Basic ${token}`;
   }
 
-  const randomPage = order === 'random' ? Math.floor(Math.random() * 5) + 1 : 1;
-
   const attempts = [
-    { label: 'e621.net (auth)', host: makeUrl('e621.net', '/posts.json'), tags: apiTags, page: randomPage, headers: authHeaders },
-    { label: 'e621.net (page 1)', host: makeUrl('e621.net', '/posts.json'), tags: apiTags, page: 1, headers: authHeaders },
-    { label: 'e621.net (public)', host: makeUrl('e621.net', '/posts.json'), tags: apiTags, page: 1, headers: baseHeaders }
+    { label: 'e621.net (auth)', host: makeUrl('e621.net', '/posts.json'), tags: apiTags, headers: authHeaders },
+    { label: 'e621.net (public)', host: makeUrl('e621.net', '/posts.json'), tags: apiTags, headers: baseHeaders }
   ];
 
   logger?.log('E621:INIT', `Prepared Booru search query`, {
@@ -458,12 +452,12 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
   });
 
   for (let i = 0; i < attempts.length; i++) {
-    const { label, host, tags, page, headers } = attempts[i];
+    const { label, host, tags, headers } = attempts[i];
     const query = encodeURIComponent(tags.join(' '));
-    const url = `${host}?limit=75&page=${page}&tags=${query}`;
+    const url = `${host}?limit=75&tags=${query}`;
     const t0 = performance.now();
 
-    logger?.log('HTTP:REQ', `Attempt #${i + 1}/${attempts.length} [${label}] GET ${url}`, { tags, page });
+    logger?.log('HTTP:REQ', `Attempt #${i + 1}/${attempts.length} [${label}] GET ${url}`, { tags });
 
     try {
       const res = await fetch(url, {
@@ -514,7 +508,7 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
       });
 
       if (rawCount === 0) {
-        logger?.explainIssue(`${label} responded OK, but found 0 posts matching \`${cleanedUserTags.join(' ') || 'your query'}\` on page ${page}.`);
+        logger?.explainIssue(`${label} responded OK, but found 0 posts matching \`${cleanedUserTags.join(' ') || 'all posts'}\`.`);
         continue;
       }
 
@@ -524,7 +518,7 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
       }
 
       const poolLimit = Math.min(validPosts.length, order === 'score' ? 15 : validPosts.length);
-      const selectedIdx = order === 'newest' ? 0 : Math.floor(Math.random() * poolLimit);
+      const selectedIdx = Math.floor(Math.random() * poolLimit);
       const picked = validPosts[selectedIdx];
       const chosen = picked.post;
 
@@ -548,7 +542,6 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
         imageUrl: result.imageUrl
       });
 
-      // Clear any earlier intermediate fallback warnings since this attempt succeeded!
       logger?.clearIssues();
       logger?.explainSuccess(`Pulled post #${result.id} (\`.${picked.ext}\`, score ${result.score}) from ${label} out of ${validPosts.length} matching results in ${latencyMs}ms.`);
       return result;
@@ -711,9 +704,8 @@ client.once(Events.ClientReady, async () => {
             .setDescription('How to sort results! ^w^')
             .setRequired(false)
             .addChoices(
-              { name: 'Random :3', value: 'random' },
-              { name: 'Top Score ^w^', value: 'score' },
-              { name: 'Newest uwu', value: 'newest' }
+              { name: 'Newest uwu', value: 'newest' },
+              { name: 'Top Score ^w^', value: 'score' }
             )
         )
     ),
@@ -953,9 +945,8 @@ client.once(Events.ClientReady, async () => {
             .setDescription('Sort order for /e621 results ^w^')
             .setRequired(false)
             .addChoices(
-              { name: 'Random :3', value: 'random' },
-              { name: 'Top Score ^w^', value: 'score' },
-              { name: 'Newest uwu', value: 'newest' }
+              { name: 'Newest uwu', value: 'newest' },
+              { name: 'Top Score ^w^', value: 'score' }
             )
         )
         .addStringOption((opt) =>
@@ -1013,7 +1004,7 @@ const ALL_COMMANDS = [
 ];
 
 // Helper to build an e621 embed + Roll Again / View Post buttons
-function buildE621Response(post, rawTags = '', order = 'random', logger = null) {
+function buildE621Response(post, rawTags = '', order = 'newest', logger = null) {
   const safeCustomId = `e621:${order}:${rawTags.slice(0, 75)}`;
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -1157,19 +1148,18 @@ async function parseLogCommandInput(interaction, logger) {
   const remTokens = remainderWithoutMentions ? remainderWithoutMentions.split(/\s+/) : [];
 
   if (targetCommand === 'e621') {
-    const validOrders = ['random', 'score', 'newest'];
+    const validOrders = ['score', 'newest'];
     const filteredTagTokens = [];
     for (const tok of remTokens) {
       if (!order && validOrders.includes(tok.toLowerCase())) {
         order = tok.toLowerCase();
-      } else {
+      } else if (tok.toLowerCase() !== 'random') {
         filteredTagTokens.push(tok);
       }
     }
     if (tags === null) {
       tags = filteredTagTokens.join(' ');
     }
-    // If no new tags were typed in /log e621, reuse the most recent /e621 search!
     if (!tags && lastE621Query.tags) {
       tags = lastE621Query.tags;
       if (!order) order = lastE621Query.order;
@@ -1204,7 +1194,7 @@ async function parseLogCommandInput(interaction, logger) {
     cutie2,
     vibe: vibe || 'furry',
     tags: tags || '',
-    order: order || 'random',
+    order: order || 'newest',
     species: species || 'neko',
     question,
     user_id
@@ -1234,7 +1224,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
 
   if (commandName === 'e621') {
     const rawTags = params.tags !== undefined && params.tags !== '' ? params.tags : lastE621Query.tags;
-    const order = params.order || lastE621Query.order || 'random';
+    const order = params.order || lastE621Query.order || 'newest';
     lastE621Query = { tags: rawTags, order, ranAt: new Date().toISOString() };
 
     logger?.log('CMD:E621', `Executing /e621 with tags="${rawTags}" order="${order}"`, { lastE621Query });
@@ -1642,14 +1632,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('e621:')) {
       const [, order, ...tagParts] = interaction.customId.split(':');
       const rawTags = tagParts.join(':');
-      lastE621Query = { tags: rawTags, order: order || 'random', ranAt: new Date().toISOString() };
+      lastE621Query = { tags: rawTags, order: order || 'newest', ranAt: new Date().toISOString() };
       await interaction.deferReply();
 
-      const post = await fetchE621Post(rawTags, order || 'random');
+      const post = await fetchE621Post(rawTags, order || 'newest');
       if (!post) {
         return interaction.editReply(`Awr~ Couldn't find another e621 post for \`${rawTags || 'those tags'}\` right now! >_<`);
       }
-      await interaction.editReply(buildE621Response(post, rawTags, order || 'random'));
+      await interaction.editReply(buildE621Response(post, rawTags, order || 'newest'));
       return;
     }
 
@@ -1767,7 +1757,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       cutie2: interaction.options.getUser('cutie2') || null,
       vibe: interaction.options.getString('vibe') || 'furry',
       tags: interaction.options.getString('tags') || '',
-      order: interaction.options.getString('order') || 'random',
+      order: interaction.options.getString('order') || 'newest',
       species: interaction.options.getString('species') || 'neko',
       question: interaction.options.getString('question') || null,
       user_id: interaction.options.getString('user_id') || null
