@@ -52,6 +52,18 @@ class VerboseLogger {
     this.startTime = performance.now();
     this.startIso = new Date().toISOString();
     this.entries = [];
+    this.issues = [];   // Plain-English warnings or failures
+    this.successes = []; // Plain-English milestones that worked
+  }
+
+  explainIssue(plainEnglish) {
+    if (!this.enabled) return;
+    this.issues.push(plainEnglish.replace(/```/g, "'''"));
+  }
+
+  explainSuccess(plainEnglish) {
+    if (!this.enabled) return;
+    this.successes.push(plainEnglish.replace(/```/g, "'''"));
   }
 
   log(stage, message, data = undefined) {
@@ -73,7 +85,22 @@ class VerboseLogger {
     console.log(line);
   }
 
-  format(maxLength = 1650) {
+  buildPlainEnglishSummary(targetCommand, totalMs) {
+    if (this.issues.length === 0) {
+      const details = this.successes.length > 0
+        ? this.successes.join(' ')
+        : `/${targetCommand} ran smoothly with zero errors.`;
+      return `✅ **What Happened (Plain English):** Everything worked properly in \`${totalMs}ms\`! ${details}`;
+    }
+
+    const bulletList = this.issues.map((item) => `• ${item}`).join('\n');
+    const silverLining = this.successes.length > 0
+      ? `\n*What still worked:* ${this.successes.join(' ')}`
+      : '';
+    return `⚠️ **What Went Wrong (Plain English):**\n${bulletList}${silverLining}`;
+  }
+
+  format(maxLength = 1350) {
     const full = this.entries.join('\n');
     if (full.length <= maxLength) return full;
     const headLen = Math.floor(maxLength * 0.45);
@@ -198,13 +225,18 @@ async function fetchActionGif(action, vibe = 'furry', logger = null) {
           link: purrData?.link || null
         });
         if (purrData?.link && !purrData.error) {
+          logger?.explainSuccess(`Grabbed a furry/kemonomimi GIF from PurrBot in ${latencyMs}ms.`);
           return { url: purrData.link, source: 'PurrBot Furry / Kemonomimi' };
         }
+        logger?.explainIssue(`PurrBot replied with HTTP 200 for "${purrMap[action]}", but didn't include a valid GIF link, so the bot switched to a backup GIF site.`);
+      } else {
+        logger?.explainIssue(`PurrBot returned HTTP ${purrRes.status} when asked for a "${purrMap[action]}" GIF, so the bot switched to a backup GIF site.`);
       }
     } catch (err) {
       logger?.log('HTTP:ERR', `Tier 1 [PurrBot] failed, falling back to Tier 2`, {
         error: err?.message || String(err)
       });
+      logger?.explainIssue(`PurrBot took too long (>5s) or couldn't be reached (${err?.message || 'network error'}), so the bot switched to Nekos.best.`);
     }
   }
 
@@ -231,16 +263,21 @@ async function fetchActionGif(action, vibe = 'furry', logger = null) {
         animeName: item?.anime_name || null
       });
       if (item?.url) {
+        logger?.explainSuccess(`Loaded a GIF from Nekos.best in ${latencyMs}ms.`);
         return {
           url: item.url,
           source: item.anime_name ? `Nekos.best • ${item.anime_name}` : 'Nekos.best SFW'
         };
       }
+      logger?.explainIssue(`Nekos.best returned an empty list for "${endpoint}", so the bot tried Waifu.pics next.`);
+    } else {
+      logger?.explainIssue(`Nekos.best returned HTTP ${res.status}, so the bot tried Waifu.pics next.`);
     }
   } catch (err) {
     logger?.log('HTTP:ERR', `Tier 2 [Nekos.best] failed, falling back to Tier 3`, {
       error: err?.message || String(err)
     });
+    logger?.explainIssue(`Nekos.best failed to respond (${err?.message || 'timeout'}), so the bot tried Waifu.pics next.`);
   }
 
   // 3. Final backup: Waifu.pics SFW
@@ -261,16 +298,20 @@ async function fetchActionGif(action, vibe = 'furry', logger = null) {
       const wData = await wRes.json();
       logger?.log('GIF:PARSE', `Tier 3 [Waifu.pics] payload parsed`, { url: wData?.url || null });
       if (wData?.url) {
+        logger?.explainSuccess(`Loaded a backup GIF from Waifu.pics in ${latencyMs}ms.`);
         return { url: wData.url, source: 'Waifu.pics SFW' };
       }
     }
+    logger?.explainIssue(`Waifu.pics also returned HTTP ${wRes.status} with no GIF URL.`);
   } catch (err) {
     logger?.log('HTTP:ERR', `Tier 3 [Waifu.pics] failed; all GIF sources exhausted`, {
       error: err?.message || String(err)
     });
+    logger?.explainIssue(`Waifu.pics failed (${err?.message || 'timeout'}).`);
   }
 
   logger?.log('GIF:FAIL', `All 3 GIF tiers returned no valid media URL`);
+  logger?.explainIssue(`None of the 3 GIF providers (PurrBot, Nekos.best, Waifu.pics) returned a working GIF, so the embed was sent without an image.`);
   return null;
 }
 
@@ -288,7 +329,10 @@ async function fetchFurrySpecies(species = 'neko', logger = null) {
     if (res.ok) {
       const data = await res.json();
       logger?.log('SPECIES:PARSE', `Tier 1a [PurrBot GIF] payload`, { link: data?.link || null, error: data?.error ?? false });
-      if (data?.link && !data.error) return data.link;
+      if (data?.link && !data.error) {
+        logger?.explainSuccess(`Fetched a "${species}" GIF from PurrBot.`);
+        return data.link;
+      }
     }
 
     const imgUrl = `[https://api.purrbot.site/v2/img/sfw/$](https://api.purrbot.site/v2/img/sfw/$){species}/img`;
@@ -301,10 +345,15 @@ async function fetchFurrySpecies(species = 'neko', logger = null) {
     if (imgRes.ok) {
       const imgData = await imgRes.json();
       logger?.log('SPECIES:PARSE', `Tier 1b [PurrBot IMG] payload`, { link: imgData?.link || null, error: imgData?.error ?? false });
-      if (imgData?.link && !imgData.error) return imgData.link;
+      if (imgData?.link && !imgData.error) {
+        logger?.explainSuccess(`Fetched a "${species}" image from PurrBot.`);
+        return imgData.link;
+      }
     }
+    logger?.explainIssue(`PurrBot didn't have a "${species}" image available right now, so the bot switched to Nekos.best.`);
   } catch (err) {
     logger?.log('HTTP:ERR', `Tier 1 [PurrBot] error, falling back to Nekos.best`, { error: err?.message || String(err) });
+    logger?.explainIssue(`PurrBot timed out or errored (${err?.message || 'network error'}), so the bot switched to Nekos.best.`);
   }
 
   try {
@@ -320,13 +369,17 @@ async function fetchFurrySpecies(species = 'neko', logger = null) {
       const nbData = await nbRes.json();
       const url = nbData?.results?.[0]?.url || null;
       logger?.log('SPECIES:PARSE', `Tier 2 [Nekos.best] payload`, { url });
-      if (url) return url;
+      if (url) {
+        logger?.explainSuccess(`Fetched a backup "${fallbackEndpoint}" image from Nekos.best.`);
+        return url;
+      }
     }
   } catch (err) {
     logger?.log('HTTP:ERR', `Tier 2 [Nekos.best] failed`, { error: err?.message || String(err) });
   }
 
   logger?.log('SPECIES:FAIL', `No media found across all endpoints for species="${species}"`);
+  logger?.explainIssue(`Both PurrBot and Nekos.best failed to return an image for species "${species}".`);
   return null;
 }
 
@@ -355,9 +408,8 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
   const e621User = (process.env.E621_USERNAME || 'loomieaccount').trim();
   const e621Key = (process.env.E621_API_KEY || 'q8iuHtnR1XvvWaYKyVB55hyk').trim();
 
-  // e621 enforces strict "AppName/Version (by Username)" User-Agent formatting
   const headers = {
-    'User-Agent': `FurryDiscordBot/4.8 (by ${e621User} on e621)`,
+    'User-Agent': `FurryDiscordBot/4.9 (by ${e621User} on e621)`,
     'Accept': 'application/json'
   };
 
@@ -381,6 +433,7 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
 
   for (let i = 0; i < endpoints.length; i++) {
     const { host, tags } = endpoints[i];
+    const siteName = host.includes('e926') ? 'e926.net' : 'e621.net';
     const query = encodeURIComponent(tags.join(' '));
     const url = `${host}?limit=60&tags=${query}`;
     const t0 = performance.now();
@@ -398,7 +451,19 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
         status: res.status
       });
 
-      if (!res.ok) continue;
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          logger?.explainIssue(`${siteName} rejected your login/API key (HTTP ${res.status}) — double-check that E621_USERNAME ("${e621User}") and E621_API_KEY are valid and your e621 email is activated.`);
+        } else if (res.status === 429) {
+          logger?.explainIssue(`${siteName} rate-limited the bot (HTTP 429 Too Many Requests) — wait a few seconds before rolling again.`);
+        } else if (res.status === 422) {
+          logger?.explainIssue(`${siteName} rejected the search tags (HTTP 422) — you may have searched too many tags at once or used an invalid tag syntax.`);
+        } else {
+          logger?.explainIssue(`${siteName} returned server error HTTP ${res.status}.`);
+        }
+        continue;
+      }
+
       const data = await res.json();
       const rawCount = data?.posts?.length || 0;
 
@@ -423,7 +488,15 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
         validPostCount: validPosts.length
       });
 
-      if (validPosts.length === 0) continue;
+      if (rawCount === 0) {
+        logger?.explainIssue(`${siteName} responded OK, but found 0 posts matching \`${cleanedUserTags.join(' ') || 'your query'}\` (check spelling, use underscores like \`cat_boy\`, or make sure your e621 account email is activated).`);
+        continue;
+      }
+
+      if (validPosts.length === 0) {
+        logger?.explainIssue(`${siteName} found ${rawCount} posts for \`${cleanedUserTags.join(' ')}\`, but all of them were \`.webm\`/\`.swf\` videos that Discord embeds cannot display inline.`);
+        continue;
+      }
 
       const poolLimit = Math.min(validPosts.length, order === 'score' ? 15 : validPosts.length);
       const selectedIdx = order === 'newest' ? 0 : Math.floor(Math.random() * poolLimit);
@@ -450,9 +523,11 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
         imageUrl: result.imageUrl
       });
 
+      logger?.explainSuccess(`Pulled post #${result.id} (\`.${picked.ext}\`, score ${result.score}) from ${siteName} out of ${validPosts.length} matching results in ${latencyMs}ms.`);
       return result;
     } catch (err) {
       logger?.log('HTTP:ERR', `Attempt #${i + 1} threw exception`, { error: err?.message || String(err) });
+      logger?.explainIssue(`Connection to ${siteName} failed or timed out after 8 seconds (${err?.message || 'network error'}).`);
     }
   }
 
@@ -813,7 +888,7 @@ client.once(Events.ClientReady, async () => {
     makeEverywhere(
       new SlashCommandBuilder()
         .setName('log')
-        .setDescription('Run any bot command with arguments and print verbose execution logs! :3')
+        .setDescription('Run any command and get a plain-English explanation + verbose logs! :3')
         .addStringOption((opt) =>
           opt
             .setName('command')
@@ -1024,6 +1099,7 @@ async function parseLogCommandInput(interaction, logger) {
       logger.log('DISCORD:FETCH_USER_ERR', `Could not fetch user id="${cleanId}" for ${label}`, {
         error: err?.message || String(err)
       });
+      logger.explainIssue(`Couldn't find a Discord user with ID \`${cleanId}\` — make sure you copied the full numeric User ID or @mentioned them.`);
       return null;
     }
   }
@@ -1070,6 +1146,8 @@ async function parseLogCommandInput(interaction, logger) {
     const validSpecies = ['neko', 'kitsune', 'okami', 'eevee', 'holo'];
     if (!species && remTokens.length > 0 && validSpecies.includes(remTokens[0].toLowerCase())) {
       species = remTokens[0].toLowerCase();
+    } else if (!species && remTokens.length > 0) {
+      logger.explainIssue(`"${remTokens[0]}" isn't one of the supported species (\`neko\`, \`kitsune\`, \`okami\`, \`eevee\`, \`holo\`), so it defaulted to \`neko\`.`);
     }
   } else if (TARGET_ACTIONS.includes(targetCommand) || SOLO_ACTIONS.includes(targetCommand)) {
     const validVibes = ['furry', 'anime'];
@@ -1167,6 +1245,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
       logger?.log('CMD:OC_WARN', `Failed to fetch OWNER_ID, falling back to interaction.user`, {
         error: err?.message || String(err)
       });
+      logger?.explainIssue(`Couldn't fetch Loomie's profile from Discord directly, so it fell back to your own avatar.`);
       return interaction.user;
     });
     logger?.log('CMD:OC_USER', `Resolved profile user in ${(performance.now() - t0).toFixed(2)}ms`, {
@@ -1174,6 +1253,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
       username: loomieUser.username,
       ocImageConfigured: Boolean(OC_IMAGE_URL)
     });
+    logger?.explainSuccess(`Built Loomie's OC showcase card.`);
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -1220,6 +1300,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     const gif = await fetchActionGif(action, vibe, logger);
     const count = recordAffectionVerbose(interaction.user.id, cutie.id, logger);
     const chosen = buildActionCopy(action, interaction.user.id, cutie.id, logger);
+    logger?.explainSuccess(`Updated affection combo with ${cutie.username} to ${count}.`);
 
     const backCustomId = `back:${action}:${interaction.user.id}:${cutie.id}:${vibe}`;
     const backBtn = new ButtonBuilder()
@@ -1319,6 +1400,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
       filledBars: bars,
       meter
     });
+    logger?.explainSuccess(`Calculated ${score}% cuteness score for ${cutie.username}.`);
 
     let verdict = `Certified adorable! Deserves unlimited headpats ${pick('headpat', logger)}`;
     if (score >= 95) verdict = `MAXIMUM OVERLOAD!! Certified pastel thigh-high & oversized-hoodie icon!! ${pick('online', logger)}`;
@@ -1358,13 +1440,10 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     logger?.log('MATH:SHIP', `Calculated ship compatibility and combined name`, {
       user1: `${c1.username} (${c1.id})`,
       user2: `${c2.username} (${c2.id})`,
-      name1Slice: name1,
-      name2Slice: name2,
       shipName,
-      combinedBigInt: combined.toString(),
-      mod41,
       finalScore: score
     });
+    logger?.explainSuccess(`Paired ${c1.username} + ${c2.username} ("${shipName}") at ${score}% compatibility.`);
 
     return {
       embeds: [{
@@ -1398,12 +1477,8 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     const idx = Math.floor(Math.random() * replies.length);
     const answer = replies[idx];
 
-    logger?.log('RNG:8BALL', `Rolled 8-ball crystal ball response`, {
-      question,
-      poolSize: replies.length,
-      selectedIndex: idx,
-      answer
-    });
+    logger?.log('RNG:8BALL', `Rolled 8-ball crystal ball response`, { question, answer });
+    logger?.explainSuccess(`Picked 8-ball reply #${idx + 1} out of ${replies.length}.`);
 
     return {
       embeds: [{
@@ -1424,10 +1499,9 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     const count = affectionCounts.get(key) || 0;
     logger?.log('STATE:LOOKUP', `Looked up affection count in affectionCounts map`, {
       lookupKey: key,
-      foundValue: count,
-      totalMapEntries: affectionCounts.size,
-      totalAffectionDelivered
+      foundValue: count
     });
+    logger?.explainSuccess(`Looked up your affection count with ${cutie.username} (${count} total).`);
 
     return {
       embeds: [{
@@ -1442,10 +1516,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
   if (commandName === 'avatar') {
     const rawInput = params.user_id || (params.cutie ? params.cutie.id : null);
     const rawId = rawInput ? rawInput.replace(/[<@!>]/g, '').trim() : interaction.user.id;
-    logger?.log('CMD:AVATAR', `Resolving full user profile & assets`, {
-      rawInput,
-      sanitizedSnowflakeId: rawId
-    });
+    logger?.log('CMD:AVATAR', `Resolving full user profile & assets`, { rawInput, sanitizedSnowflakeId: rawId });
 
     try {
       const t0 = performance.now();
@@ -1458,11 +1529,11 @@ async function executeBotCommand(commandName, params, interaction, logger = null
       logger?.log('DISCORD:USER_ASSETS', `Fetched user profile in ${latencyMs}ms`, {
         id: fullUser.id,
         username: fullUser.username,
-        globalName: fullUser.globalName || null,
         avatarUrl,
         bannerUrl: bannerUrl || null,
         decoUrl: decoUrl || null
       });
+      logger?.explainSuccess(`Fetched ${fullUser.username}'s avatar${bannerUrl ? ', banner,' : ''} and profile details in ${latencyMs}ms.`);
 
       return {
         embeds: [{
@@ -1483,6 +1554,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
       logger?.log('DISCORD:USER_ERR', `Failed to fetch user with ID "${rawId}"`, {
         error: err?.message || String(err)
       });
+      logger?.explainIssue(`Discord couldn't find any account with User ID \`${rawId}\` (${err?.message || 'Unknown User'}).`);
       return {
         content: `Awr~ I couldn’t find anyone with that ID! Make sure Developer Mode is on and copy the numeric User ID, >_<`
       };
@@ -1497,12 +1569,10 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     logger?.log('CMD:STATS', `Collected runtime & bot telemetry`, {
       wsPingMs: client.ws.ping,
       uptimeSec,
-      formattedUptime: `${hrs}h ${mins % 60}m`,
       totalAffectionDelivered,
-      trackedAffectionPairs: affectionCounts.size,
-      rssMB: (mem.rss / 1048576).toFixed(2),
-      heapUsedMB: (mem.heapUsed / 1048576).toFixed(2)
+      rssMB: (mem.rss / 1048576).toFixed(2)
     });
+    logger?.explainSuccess(`Bot is online with ${client.ws.ping}ms Discord ping and ${hrs}h ${mins % 60}m uptime.`);
 
     return {
       embeds: [{
@@ -1524,6 +1594,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     requestedCommand: commandName,
     supportedCommands: validList
   });
+  logger?.explainIssue(`\`/${commandName}\` isn't a valid command on this bot! Valid commands you can test are: \`${validList}\`.`);
   return {
     content: `Awr~ Unknown command \`/${commandName}\`! >_<\nAvailable commands to run with \`/log\`: \`${validList}\` :3`
   };
@@ -1583,7 +1654,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (!interaction.isChatInputCommand()) return;
 
-    // /log — Run any command and its arguments while printing verbose logs cleanly!
+    // /log — Run any command and print a Plain-English Diagnosis + verbose logs!
     if (interaction.commandName === 'log') {
       const deferStart = performance.now();
       await interaction.deferReply();
@@ -1622,9 +1693,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         heapUsedMB: (memEnd.heapUsed / 1048576).toFixed(2)
       });
 
+      const plainEnglishSummary = logger.buildPlainEnglishSummary(targetCommand, totalMs);
       const baseContent = resultPayload.content ? `${resultPayload.content}\n\n` : '';
-      const header = `**📋 Verbose Execution Log (\`/${targetCommand}\` • \`${totalMs}ms\` • \`${logger.entries.length} events\`)**`;
-      const maxLogChars = Math.max(300, 1920 - baseContent.length - header.length - 16);
+      const header = `${plainEnglishSummary}\n\n**📋 Technical Trace (\`/${targetCommand}\` • \`${logger.entries.length} events\`)**`;
+      const maxLogChars = Math.max(250, 1920 - baseContent.length - header.length - 16);
       const formattedLog = logger.format(maxLogChars);
       const contentWithLogs = `${baseContent}${header}\n\`\`\`log\n${formattedLog}\n\`\`\``.slice(0, 2000);
 
