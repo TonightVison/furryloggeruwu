@@ -27,9 +27,10 @@ const OWNER_ID = '1416390397881749514';
 const SITE_URL = makeUrl('emolarp.fans');
 const OC_IMAGE_URL = (process.env.OC_IMAGE_URL || '').trim();
 
-// In-memory affection counter
+// In-memory affection counter & most recent /e621 query tracker
 const affectionCounts = new Map();
 let totalAffectionDelivered = 0;
+let lastE621Query = { tags: '', order: 'random', ranAt: null };
 
 function recordAffection(fromId, toId) {
   totalAffectionDelivered += 1;
@@ -53,11 +54,20 @@ const KAOMOJI = {
 class VerboseLogger {
   constructor(enabled = false) {
     this.enabled = enabled;
+    this.reset();
+  }
+
+  reset() {
     this.startTime = performance.now();
     this.startIso = new Date().toISOString();
     this.entries = [];
     this.issues = [];
     this.successes = [];
+  }
+
+  clearIssues() {
+    if (!this.enabled) return;
+    this.issues = [];
   }
 
   explainIssue(plainEnglish) {
@@ -229,18 +239,19 @@ async function fetchActionGif(action, vibe = 'furry', logger = null) {
           link: purrData?.link || null
         });
         if (purrData?.link && !purrData.error) {
+          logger?.clearIssues();
           logger?.explainSuccess(`Grabbed a furry/kemonomimi GIF from PurrBot in ${latencyMs}ms.`);
           return { url: purrData.link, source: 'PurrBot Furry / Kemonomimi' };
         }
-        logger?.explainIssue(`PurrBot replied with HTTP 200 for "${purrMap[action]}", but didn't include a valid GIF link, so the bot switched to a backup GIF site.`);
+        logger?.explainIssue(`PurrBot replied with HTTP 200 for "${purrMap[action]}", but didn't include a valid GIF link.`);
       } else {
-        logger?.explainIssue(`PurrBot returned HTTP ${purrRes.status} when asked for a "${purrMap[action]}" GIF, so the bot switched to a backup GIF site.`);
+        logger?.explainIssue(`PurrBot returned HTTP ${purrRes.status} when asked for a "${purrMap[action]}" GIF.`);
       }
     } catch (err) {
       logger?.log('HTTP:ERR', `Tier 1 [PurrBot] failed, falling back to Tier 2`, {
         error: err?.message || String(err)
       });
-      logger?.explainIssue(`PurrBot took too long (>5s) or couldn't be reached (${err?.message || 'network error'}), so the bot switched to Nekos.best.`);
+      logger?.explainIssue(`PurrBot took too long (>5s) or couldn't be reached (${err?.message || 'network error'}).`);
     }
   }
 
@@ -267,21 +278,22 @@ async function fetchActionGif(action, vibe = 'furry', logger = null) {
         animeName: item?.anime_name || null
       });
       if (item?.url) {
+        logger?.clearIssues();
         logger?.explainSuccess(`Loaded a GIF from Nekos.best in ${latencyMs}ms.`);
         return {
           url: item.url,
           source: item.anime_name ? `Nekos.best • ${item.anime_name}` : 'Nekos.best SFW'
         };
       }
-      logger?.explainIssue(`Nekos.best returned an empty list for "${endpoint}", so the bot tried Waifu.pics next.`);
+      logger?.explainIssue(`Nekos.best returned an empty list for "${endpoint}".`);
     } else {
-      logger?.explainIssue(`Nekos.best returned HTTP ${res.status}, so the bot tried Waifu.pics next.`);
+      logger?.explainIssue(`Nekos.best returned HTTP ${res.status}.`);
     }
   } catch (err) {
     logger?.log('HTTP:ERR', `Tier 2 [Nekos.best] failed, falling back to Tier 3`, {
       error: err?.message || String(err)
     });
-    logger?.explainIssue(`Nekos.best failed to respond (${err?.message || 'timeout'}), so the bot tried Waifu.pics next.`);
+    logger?.explainIssue(`Nekos.best failed to respond (${err?.message || 'timeout'}).`);
   }
 
   // 3. Final backup: Waifu.pics SFW
@@ -302,6 +314,7 @@ async function fetchActionGif(action, vibe = 'furry', logger = null) {
       const wData = await wRes.json();
       logger?.log('GIF:PARSE', `Tier 3 [Waifu.pics] payload parsed`, { url: wData?.url || null });
       if (wData?.url) {
+        logger?.clearIssues();
         logger?.explainSuccess(`Loaded a backup GIF from Waifu.pics in ${latencyMs}ms.`);
         return { url: wData.url, source: 'Waifu.pics SFW' };
       }
@@ -334,6 +347,7 @@ async function fetchFurrySpecies(species = 'neko', logger = null) {
       const data = await res.json();
       logger?.log('SPECIES:PARSE', `Tier 1a [PurrBot GIF] payload`, { link: data?.link || null, error: data?.error ?? false });
       if (data?.link && !data.error) {
+        logger?.clearIssues();
         logger?.explainSuccess(`Fetched a "${species}" GIF from PurrBot.`);
         return data.link;
       }
@@ -350,14 +364,15 @@ async function fetchFurrySpecies(species = 'neko', logger = null) {
       const imgData = await imgRes.json();
       logger?.log('SPECIES:PARSE', `Tier 1b [PurrBot IMG] payload`, { link: imgData?.link || null, error: imgData?.error ?? false });
       if (imgData?.link && !imgData.error) {
+        logger?.clearIssues();
         logger?.explainSuccess(`Fetched a "${species}" image from PurrBot.`);
         return imgData.link;
       }
     }
-    logger?.explainIssue(`PurrBot didn't have a "${species}" image available right now, so the bot switched to Nekos.best.`);
+    logger?.explainIssue(`PurrBot didn't have a "${species}" image available right now.`);
   } catch (err) {
     logger?.log('HTTP:ERR', `Tier 1 [PurrBot] error, falling back to Nekos.best`, { error: err?.message || String(err) });
-    logger?.explainIssue(`PurrBot timed out or errored (${err?.message || 'network error'}), so the bot switched to Nekos.best.`);
+    logger?.explainIssue(`PurrBot timed out or errored (${err?.message || 'network error'}).`);
   }
 
   try {
@@ -374,6 +389,7 @@ async function fetchFurrySpecies(species = 'neko', logger = null) {
       const url = nbData?.results?.[0]?.url || null;
       logger?.log('SPECIES:PARSE', `Tier 2 [Nekos.best] payload`, { url });
       if (url) {
+        logger?.clearIssues();
         logger?.explainSuccess(`Fetched a backup "${fallbackEndpoint}" image from Nekos.best.`);
         return url;
       }
@@ -387,7 +403,7 @@ async function fetchFurrySpecies(species = 'neko', logger = null) {
   return null;
 }
 
-// Fetch media from e621.net (Auth -> Unauthenticated e621 -> Unauthenticated e926)
+// Fetch media from e621.net (avoiding broken order:random API quirk & clearing stale warnings on success)
 async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
   const tagAliases = {
     sfw: 'rating:s',
@@ -405,15 +421,16 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
 
   const allowedExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
 
-  const primaryTags = [...cleanedUserTags];
-  if (order === 'random') primaryTags.push('order:random');
-  else if (order === 'score') primaryTags.push('order:score');
+  // Avoid passing order:random directly to e621 API (which often returns empty posts:[] on API requests);
+  // instead fetch a pool of 75 posts and pick randomly in JS!
+  const apiTags = [...cleanedUserTags];
+  if (order === 'score') apiTags.push('order:score');
 
   const e621User = (process.env.E621_USERNAME || 'loomieaccount').trim();
   const e621Key = (process.env.E621_API_KEY || 'q8iuHtnR1XvvWaYKyVB55hyk').trim();
 
   const baseHeaders = {
-    'User-Agent': `FurryDiscordBot/5.1 (by ${e621User} on e621)`,
+    'User-Agent': `FurryDiscordBot/5.2 (by ${e621User} on e621)`,
     'Accept': 'application/json'
   };
 
@@ -423,28 +440,30 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
     authHeaders['Authorization'] = `Basic ${token}`;
   }
 
-  // 1) e621.net with Basic Auth, 2) e621.net without Auth (bypasses unactivated account/blacklist filters), 3) e926.net without Auth
-  const endpoints = [
-    { label: 'e621.net (auth)', host: makeUrl('e621.net', '/posts.json'), tags: primaryTags, headers: authHeaders },
-    { label: 'e621.net (public)', host: makeUrl('e621.net', '/posts.json'), tags: primaryTags, headers: baseHeaders },
-    { label: 'e926.net (public)', host: makeUrl('e926.net', '/posts.json'), tags: primaryTags, headers: baseHeaders }
+  const randomPage = order === 'random' ? Math.floor(Math.random() * 5) + 1 : 1;
+
+  const attempts = [
+    { label: 'e621.net (auth)', host: makeUrl('e621.net', '/posts.json'), tags: apiTags, page: randomPage, headers: authHeaders },
+    { label: 'e621.net (page 1)', host: makeUrl('e621.net', '/posts.json'), tags: apiTags, page: 1, headers: authHeaders },
+    { label: 'e621.net (public)', host: makeUrl('e621.net', '/posts.json'), tags: apiTags, page: 1, headers: baseHeaders }
   ];
 
   logger?.log('E621:INIT', `Prepared Booru search query`, {
     rawTags,
     order,
     cleanedUserTags,
+    apiTags,
     authenticated: Boolean(e621User && e621Key),
     userAgent: baseHeaders['User-Agent']
   });
 
-  for (let i = 0; i < endpoints.length; i++) {
-    const { label, host, tags, headers } = endpoints[i];
+  for (let i = 0; i < attempts.length; i++) {
+    const { label, host, tags, page, headers } = attempts[i];
     const query = encodeURIComponent(tags.join(' '));
-    const url = `${host}?limit=60&tags=${query}`;
+    const url = `${host}?limit=75&page=${page}&tags=${query}`;
     const t0 = performance.now();
 
-    logger?.log('HTTP:REQ', `Attempt #${i + 1}/${endpoints.length} [${label}] GET ${url}`, { tags });
+    logger?.log('HTTP:REQ', `Attempt #${i + 1}/${attempts.length} [${label}] GET ${url}`, { tags, page });
 
     try {
       const res = await fetch(url, {
@@ -459,7 +478,7 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
 
       if (!res.ok) {
         if (res.status === 401 || res.status === 403) {
-          logger?.explainIssue(`${label} rejected the request (HTTP ${res.status}) — make sure your e621 account email is activated in Gmail.`);
+          logger?.explainIssue(`${label} rejected the request (HTTP ${res.status}) — verify E621_USERNAME and E621_API_KEY.`);
         } else if (res.status === 429) {
           logger?.explainIssue(`${label} rate-limited the bot (HTTP 429) — wait a few seconds before rolling again.`);
         } else if (res.status === 422) {
@@ -495,7 +514,7 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
       });
 
       if (rawCount === 0) {
-        logger?.explainIssue(`${label} responded OK, but found 0 posts matching \`${cleanedUserTags.join(' ') || 'your query'}\` (your e621 account blacklist/unactivated email may have hidden results, so trying next fallback).`);
+        logger?.explainIssue(`${label} responded OK, but found 0 posts matching \`${cleanedUserTags.join(' ') || 'your query'}\` on page ${page}.`);
         continue;
       }
 
@@ -529,6 +548,8 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
         imageUrl: result.imageUrl
       });
 
+      // Clear any earlier intermediate fallback warnings since this attempt succeeded!
+      logger?.clearIssues();
       logger?.explainSuccess(`Pulled post #${result.id} (\`.${picked.ext}\`, score ${result.score}) from ${label} out of ${validPosts.length} matching results in ${latencyMs}ms.`);
       return result;
     } catch (err) {
@@ -894,11 +915,11 @@ client.once(Events.ClientReady, async () => {
     makeEverywhere(
       new SlashCommandBuilder()
         .setName('log')
-        .setDescription('Run any command and get a plain-English explanation + verbose logs! :3')
+        .setDescription('Run any command and get a fresh plain-English explanation + verbose logs! :3')
         .addStringOption((opt) =>
           opt
             .setName('command')
-            .setDescription('Command & args to run (e.g. "e621 deer", "hug @user", "stats") :3')
+            .setDescription('Command & args (or "e621" alone to rerun your most recent e621 search!) :3')
             .setRequired(true)
         )
         .addStringOption((opt) =>
@@ -1148,6 +1169,12 @@ async function parseLogCommandInput(interaction, logger) {
     if (tags === null) {
       tags = filteredTagTokens.join(' ');
     }
+    // If no new tags were typed in /log e621, reuse the most recent /e621 search!
+    if (!tags && lastE621Query.tags) {
+      tags = lastE621Query.tags;
+      if (!order) order = lastE621Query.order;
+      logger.log('PARSER:RECENT_E621', `Reusing most recent /e621 search`, lastE621Query);
+    }
   } else if (targetCommand === 'furrypic') {
     const validSpecies = ['neko', 'kitsune', 'okami', 'eevee', 'holo'];
     if (!species && remTokens.length > 0 && validSpecies.includes(remTokens[0].toLowerCase())) {
@@ -1206,9 +1233,11 @@ async function executeBotCommand(commandName, params, interaction, logger = null
   });
 
   if (commandName === 'e621') {
-    const rawTags = params.tags || '';
-    const order = params.order || 'random';
-    logger?.log('CMD:E621', `Executing /e621 with tags="${rawTags}" order="${order}"`);
+    const rawTags = params.tags !== undefined && params.tags !== '' ? params.tags : lastE621Query.tags;
+    const order = params.order || lastE621Query.order || 'random';
+    lastE621Query = { tags: rawTags, order, ranAt: new Date().toISOString() };
+
+    logger?.log('CMD:E621', `Executing /e621 with tags="${rawTags}" order="${order}"`, { lastE621Query });
     const post = await fetchE621Post(rawTags, order, logger);
 
     if (!post) {
@@ -1613,6 +1642,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('e621:')) {
       const [, order, ...tagParts] = interaction.customId.split(':');
       const rawTags = tagParts.join(':');
+      lastE621Query = { tags: rawTags, order: order || 'random', ranAt: new Date().toISOString() };
       await interaction.deferReply();
 
       const post = await fetchE621Post(rawTags, order || 'random');
@@ -1660,15 +1690,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (!interaction.isChatInputCommand()) return;
 
-    // /log — Run any command and print a Plain-English Diagnosis + verbose logs!
+    // /log — Fresh logger reset per invocation + Plain-English Diagnosis + verbose trace!
     if (interaction.commandName === 'log') {
       const deferStart = performance.now();
       await interaction.deferReply();
 
       const logger = new VerboseLogger(true);
+      logger.reset();
       const memStart = process.memoryUsage();
 
-      logger.log('INIT', `Initialized verbose logger for /log`, {
+      logger.log('INIT', `Initialized fresh verbose logger for /log`, {
         interactionId: interaction.id,
         user: `${interaction.user.tag} (${interaction.user.id})`,
         guildId: interaction.guildId || 'DM',
@@ -1769,6 +1800,7 @@ http.createServer((req, res) => {
     website: SITE_URL,
     bot: client.user?.tag || 'booting...',
     totalAffectionDelivered,
+    lastE621Query,
     uptimeSeconds: Math.floor(process.uptime())
   }));
 }).listen(PORT, () => {
