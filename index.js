@@ -387,7 +387,7 @@ async function fetchFurrySpecies(species = 'neko', logger = null) {
   return null;
 }
 
-// Fetch media from e621.net (with Basic Auth) + unauthenticated e926.net fallback
+// Fetch media from e621.net (Auth -> Unauthenticated e621 -> Unauthenticated e926)
 async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
   const tagAliases = {
     sfw: 'rating:s',
@@ -413,7 +413,7 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
   const e621Key = (process.env.E621_API_KEY || 'q8iuHtnR1XvvWaYKyVB55hyk').trim();
 
   const baseHeaders = {
-    'User-Agent': `FurryDiscordBot/5.0 (by ${e621User} on e621)`,
+    'User-Agent': `FurryDiscordBot/5.1 (by ${e621User} on e621)`,
     'Accept': 'application/json'
   };
 
@@ -423,10 +423,11 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
     authHeaders['Authorization'] = `Basic ${token}`;
   }
 
-  // Only send e621 API key to e621.net; query e926.net without auth so it never throws HTTP 403
+  // 1) e621.net with Basic Auth, 2) e621.net without Auth (bypasses unactivated account/blacklist filters), 3) e926.net without Auth
   const endpoints = [
-    { host: makeUrl('e621.net', '/posts.json'), tags: primaryTags, headers: authHeaders },
-    { host: makeUrl('e926.net', '/posts.json'), tags: primaryTags, headers: baseHeaders }
+    { label: 'e621.net (auth)', host: makeUrl('e621.net', '/posts.json'), tags: primaryTags, headers: authHeaders },
+    { label: 'e621.net (public)', host: makeUrl('e621.net', '/posts.json'), tags: primaryTags, headers: baseHeaders },
+    { label: 'e926.net (public)', host: makeUrl('e926.net', '/posts.json'), tags: primaryTags, headers: baseHeaders }
   ];
 
   logger?.log('E621:INIT', `Prepared Booru search query`, {
@@ -438,13 +439,12 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
   });
 
   for (let i = 0; i < endpoints.length; i++) {
-    const { host, tags, headers } = endpoints[i];
-    const siteName = host.includes('e926') ? 'e926.net' : 'e621.net';
+    const { label, host, tags, headers } = endpoints[i];
     const query = encodeURIComponent(tags.join(' '));
     const url = `${host}?limit=60&tags=${query}`;
     const t0 = performance.now();
 
-    logger?.log('HTTP:REQ', `Attempt #${i + 1}/${endpoints.length} GET ${url}`, { tags });
+    logger?.log('HTTP:REQ', `Attempt #${i + 1}/${endpoints.length} [${label}] GET ${url}`, { tags });
 
     try {
       const res = await fetch(url, {
@@ -452,20 +452,20 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
         signal: AbortSignal.timeout(8000)
       });
       const latencyMs = (performance.now() - t0).toFixed(2);
-      logger?.log('HTTP:RES', `Attempt #${i + 1} HTTP ${res.status} in ${latencyMs}ms`, {
+      logger?.log('HTTP:RES', `Attempt #${i + 1} [${label}] HTTP ${res.status} in ${latencyMs}ms`, {
         ok: res.ok,
         status: res.status
       });
 
       if (!res.ok) {
         if (res.status === 401 || res.status === 403) {
-          logger?.explainIssue(`${siteName} rejected the request (HTTP ${res.status}) — make sure your e621 account email is activated in Gmail.`);
+          logger?.explainIssue(`${label} rejected the request (HTTP ${res.status}) — make sure your e621 account email is activated in Gmail.`);
         } else if (res.status === 429) {
-          logger?.explainIssue(`${siteName} rate-limited the bot (HTTP 429) — wait a few seconds before rolling again.`);
+          logger?.explainIssue(`${label} rate-limited the bot (HTTP 429) — wait a few seconds before rolling again.`);
         } else if (res.status === 422) {
-          logger?.explainIssue(`${siteName} rejected the search tags (HTTP 422) — check tag syntax or reduce the number of tags.`);
+          logger?.explainIssue(`${label} rejected the search tags (HTTP 422) — check tag syntax or reduce the number of tags.`);
         } else {
-          logger?.explainIssue(`${siteName} returned HTTP ${res.status}.`);
+          logger?.explainIssue(`${label} returned HTTP ${res.status}.`);
         }
         continue;
       }
@@ -489,18 +489,18 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
         .filter((item) => item.displayUrl && allowedExts.includes(item.ext));
 
       logger?.log('E621:FILTER', `Filtered posts for valid extensions`, {
-        host,
+        label,
         rawPostCount: rawCount,
         validPostCount: validPosts.length
       });
 
       if (rawCount === 0) {
-        logger?.explainIssue(`${siteName} responded OK, but found 0 posts matching \`${cleanedUserTags.join(' ') || 'your query'}\` (check tag spelling or activate your e621 account email).`);
+        logger?.explainIssue(`${label} responded OK, but found 0 posts matching \`${cleanedUserTags.join(' ') || 'your query'}\` (your e621 account blacklist/unactivated email may have hidden results, so trying next fallback).`);
         continue;
       }
 
       if (validPosts.length === 0) {
-        logger?.explainIssue(`${siteName} found ${rawCount} posts for \`${cleanedUserTags.join(' ')}\`, but all of them were \`.webm\`/\`.swf\` videos.`);
+        logger?.explainIssue(`${label} found ${rawCount} posts for \`${cleanedUserTags.join(' ')}\`, but all of them were \`.webm\`/\`.swf\` videos.`);
         continue;
       }
 
@@ -522,18 +522,18 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
         searchedTags: cleanedUserTags.length ? cleanedUserTags.join(' ') : 'all posts'
       };
 
-      logger?.log('E621:SELECT', `Selected post #${result.id} from ${host}`, {
+      logger?.log('E621:SELECT', `Selected post #${result.id} from ${label}`, {
         id: result.id,
         ext: picked.ext,
         score: result.score,
         imageUrl: result.imageUrl
       });
 
-      logger?.explainSuccess(`Pulled post #${result.id} (\`.${picked.ext}\`, score ${result.score}) from ${siteName} out of ${validPosts.length} matching results in ${latencyMs}ms.`);
+      logger?.explainSuccess(`Pulled post #${result.id} (\`.${picked.ext}\`, score ${result.score}) from ${label} out of ${validPosts.length} matching results in ${latencyMs}ms.`);
       return result;
     } catch (err) {
-      logger?.log('HTTP:ERR', `Attempt #${i + 1} threw exception`, { error: err?.message || String(err) });
-      logger?.explainIssue(`Connection to ${siteName} failed or timed out (${err?.message || 'network error'}).`);
+      logger?.log('HTTP:ERR', `Attempt #${i + 1} [${label}] threw exception`, { error: err?.message || String(err) });
+      logger?.explainIssue(`Connection to ${label} failed or timed out (${err?.message || 'network error'}).`);
     }
   }
 
