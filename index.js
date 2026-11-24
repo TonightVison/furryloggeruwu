@@ -205,12 +205,12 @@ async function fetchFurrySpecies(species = 'neko') {
   return null;
 }
 
-// Fetch SFW media from e621.net Booru API with specified tags
+// Fetch SFW & NSFW media from e621.net Booru API with specified tags
 async function fetchE621Post(rawTags = '', order = 'random') {
   const cleanedUserTags = rawTags
     .split(/\s+/)
     .map((t) => t.trim().toLowerCase())
-    .filter((t) => t && !t.startsWith('rating:') && !t.startsWith('-rating:') && !t.startsWith('order:'));
+    .filter((t) => t && !t.startsWith('order:'));
 
   const finalTags = ['-webm', '-swf', ...cleanedUserTags];
   if (order === 'random') finalTags.push('order:random');
@@ -249,7 +249,7 @@ async function fetchE621Post(rawTags = '', order = 'random') {
       score: chosen.score?.total ?? 0,
       artists: artists.length ? artists.join(', ') : 'Unknown',
       species: species.length ? species.join(', ') : 'Unspecified',
-      searchedTags: cleanedUserTags.length ? cleanedUserTags.join(' ') : 'all safe posts'
+      searchedTags: cleanedUserTags.length ? cleanedUserTags.join(' ') : 'all posts'
     };
   } catch {
     return null;
@@ -379,7 +379,7 @@ client.once(Events.ClientReady, async () => {
     makeEverywhere(
       new SlashCommandBuilder()
         .setName('e621')
-        .setDescription('Pull SFW furry images & GIFs from e621.net using booru tags! :3')
+        .setDescription('Pull furry images & GIFs from e621.net using booru tags! :3')
         .addStringOption((opt) =>
           opt
             .setName('tags')
@@ -615,14 +615,14 @@ function buildE621Response(post, rawTags = '', order = 'random') {
 
   return {
     embeds: [{
-      title: `e621 Safe Booru Pull~ ${pick('cute')}`,
+      title: `e621 Booru Pull~ ${pick('cute')}`,
       description:
-        `*ears perk up and tail wags!* Found a fresh SFW post for \`${post.searchedTags}\`! ${pick('online')}\n\n` +
+        `*ears perk up and tail wags!* Found a fresh post for \`${post.searchedTags}\`! ${pick('online')}\n\n` +
         `• **Artist:** \`${post.artists}\` • **Species:** \`${post.species}\` • **Score:** \`${post.score}\`\n` +
         `• [emolarp.fans](${SITE_URL}) :3`,
       color: PASTEL_PINK,
       image: { url: post.imageUrl },
-      footer: { text: `e621.net (rating:s) • Post #${post.id} • paws & thigh-highs certified :3` }
+      footer: { text: `e621.net • Post #${post.id} • paws & thigh-highs certified :3` }
     }],
     components: [row]
   };
@@ -638,7 +638,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     const post = await fetchE621Post(rawTags, order || 'random');
     if (!post) {
-      return interaction.editReply(`Awr~ Couldn't find another SFW e621 post for \`${rawTags || 'those tags'}\` right now! >_<`);
+      return interaction.editReply(`Awr~ Couldn't find another e621 post for \`${rawTags || 'those tags'}\` right now! >_<`);
     }
     await interaction.editReply(buildE621Response(post, rawTags, order || 'random'));
     return;
@@ -681,7 +681,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   if (!interaction.isChatInputCommand()) return;
 
-  // /e621 — Pull SFW booru images/GIFs from e621.net with custom tags!
+  // /e621 — Pull booru images/GIFs from e621.net with custom tags!
   if (interaction.commandName === 'e621') {
     await interaction.deferReply();
     const rawTags = interaction.options.getString('tags') || '';
@@ -690,7 +690,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (!post) {
       return interaction.editReply(
-        `Awr~ I couldn't find any SFW (\`rating:s\`) image/GIF posts on e621 for \`${rawTags || 'your search'}\`! Try simpler underscore tags like \`deer\`, \`fox cuddle\`, or \`cat_boy\`, >_<`
+        `Awr~ I couldn't find any image/GIF posts on e621 for \`${rawTags || 'your search'}\`! Try simpler underscore tags like \`deer\`, \`fox cuddle\`, or \`cat_boy\`, >_<`
       );
     }
 
