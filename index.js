@@ -6,6 +6,7 @@ import {
   Routes,
   SlashCommandBuilder
 } from 'discord.js';
+import http from 'node:http';
 import 'dotenv/config';
 
 const client = new Client({
@@ -192,6 +193,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
   });
 
   await interaction.editReply(`Sent **${fullUser.username}**'s profile & status snapshot to your webhook! :3`);
+});
+
+// 5. Tiny HTTP Keep-Alive Server for Render's Free Web Service
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('furry is awake :3');
+}).listen(PORT, () => {
+  console.log(`Health server listening on port ${PORT}`);
 });
 
 client.login(process.env.DISCORD_TOKEN);
