@@ -207,53 +207,95 @@ async function fetchFurrySpecies(species = 'neko') {
 
 // Fetch SFW & NSFW media from e621.net Booru API with specified tags
 async function fetchE621Post(rawTags = '', order = 'random') {
+  const tagAliases = {
+    sfw: 'rating:s',
+    safe: 'rating:s',
+    nsfw: '-rating:s',
+    explicit: 'rating:e',
+    questionable: 'rating:q'
+  };
+
   const cleanedUserTags = rawTags
-    .split(/\s+/)
+    .split(/[\s,]+/)
     .map((t) => t.trim().toLowerCase())
-    .filter((t) => t && !t.startsWith('order:'));
+    .filter((t) => t && !t.startsWith('order:'))
+    .map((t) => tagAliases[t] || t);
 
-  const finalTags = ['-webm', '-swf', ...cleanedUserTags];
-  if (order === 'random') finalTags.push('order:random');
-  else if (order === 'score') finalTags.push('order:score');
+  const allowedExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
 
-  const query = encodeURIComponent(finalTags.join(' '));
-  const url = `https://e621.net/posts.json?limit=25&tags=${query}`;
+  // Build candidate tag queries: try requested order first, then fallback without order:random if e621 throttles (429)
+  const primaryTags = [...cleanedUserTags];
+  if (order === 'random') primaryTags.push('order:random');
+  else if (order === 'score') primaryTags.push('order:score');
 
-  try {
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': 'furry-discord-bot/4.6 (by Loomie on GitHub)'
-      },
-      signal: AbortSignal.timeout(6000)
-    });
-
-    if (!res.ok) return null;
-    const data = await res.json();
-    const validPosts = (data?.posts || []).filter(
-      (p) => p?.file?.url && ['jpg', 'jpeg', 'png', 'gif'].includes(p.file.ext?.toLowerCase())
-    );
-
-    if (validPosts.length === 0) return null;
-
-    const chosen = order === 'random'
-      ? validPosts[0]
-      : validPosts[Math.floor(Math.random() * Math.min(validPosts.length, 10))];
-
-    const artists = (chosen.tags?.artist || []).filter((a) => a !== 'conditional_dnp').slice(0, 3);
-    const species = (chosen.tags?.species || []).slice(0, 4);
-
-    return {
-      id: chosen.id,
-      imageUrl: chosen.file.url,
-      postUrl: `https://e621.net/posts/${chosen.id}`,
-      score: chosen.score?.total ?? 0,
-      artists: artists.length ? artists.join(', ') : 'Unknown',
-      species: species.length ? species.join(', ') : 'Unspecified',
-      searchedTags: cleanedUserTags.length ? cleanedUserTags.join(' ') : 'all posts'
-    };
-  } catch {
-    return null;
+  const attempts = [primaryTags];
+  if (order === 'random') {
+    attempts.push([...cleanedUserTags]);
   }
+
+  for (let i = 0; i < attempts.length; i++) {
+    const tagsList = attempts[i];
+    const query = encodeURIComponent(tagsList.join(' '));
+    const url = `https://e621.net/posts.json?limit=60&tags=${query}`;
+
+    try {
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': 'furry-discord-bot/4.6 (by Loomie on GitHub)',
+          'Accept': 'application/json'
+        },
+        signal: AbortSignal.timeout(8000)
+      });
+
+      if (res.status === 429 || res.status >= 500) {
+        await new Promise((r) => setTimeout(r, 800));
+        continue;
+      }
+
+      if (!res.ok) continue;
+      const data = await res.json();
+
+      const validPosts = (data?.posts || [])
+        .map((p) => {
+          const ext = p?.file?.ext?.toLowerCase();
+          const md5 = p?.file?.md5;
+          const directUrl =
+            p?.file?.url ||
+            (md5 && ext
+              ? `https://static1.e621.net/data/${md5.slice(0, 2)}/${md5.slice(2, 4)}/${md5}.${ext}`
+              : null);
+          const displayUrl =
+            ext === 'gif' ? directUrl : (p?.file?.size > 8_000_000 && p?.sample?.url ? p.sample.url : directUrl);
+          return { post: p, ext, displayUrl };
+        })
+        .filter((item) => item.displayUrl && allowedExts.includes(item.ext));
+
+      if (validPosts.length === 0) continue;
+
+      const picked =
+        order === 'newest'
+          ? validPosts[0]
+          : validPosts[Math.floor(Math.random() * Math.min(validPosts.length, order === 'score' ? 15 : validPosts.length))];
+
+      const chosen = picked.post;
+      const artists = (chosen.tags?.artist || []).filter((a) => a !== 'conditional_dnp').slice(0, 3);
+      const species = (chosen.tags?.species || []).slice(0, 4);
+
+      return {
+        id: chosen.id,
+        imageUrl: picked.displayUrl,
+        postUrl: `https://e621.net/posts/${chosen.id}`,
+        score: chosen.score?.total ?? 0,
+        artists: artists.length ? artists.join(', ') : 'Unknown',
+        species: species.length ? species.join(', ') : 'Unspecified',
+        searchedTags: cleanedUserTags.length ? cleanedUserTags.join(' ') : 'all posts'
+      };
+    } catch {
+      // Try next fallback attempt
+    }
+  }
+
+  return null;
 }
 
 function buildActionCopy(action, fromId, toId) {
