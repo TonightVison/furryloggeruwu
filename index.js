@@ -24,7 +24,7 @@ const client = new Client({
   partials: [Partials.Channel, Partials.Message]
 });
 
-// Safe URL builder so clipboard extensions never turn URLs into Markdown links!
+// Safe URL builder
 const HTTPS = ['https:', ''].join('//');
 const makeUrl = (host, path = '') => `${HTTPS}${host}${path}`;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -228,21 +228,19 @@ async function fetchActionGif(action, vibe = 'furry', logger = null) {
   if (vibe === 'furry' && purrMap[action]) {
     const purrUrl = makeUrl('api.purrbot.site', `/v2/img/sfw/${purrMap[action]}/gif`);
     const t0 = performance.now();
-    logger?.log('HTTP:REQ', `Tier 1 [PurrBot] GET ${purrUrl}`, { timeoutMs: 5000 });
     try {
       const purrRes = await fetch(purrUrl, { signal: AbortSignal.timeout(5000) });
       const latencyMs = (performance.now() - t0).toFixed(2);
-      logger?.log('HTTP:RES', `Tier 1 [PurrBot] responded HTTP ${purrRes.status} in ${latencyMs}ms`);
       if (purrRes.ok) {
         const purrData = await purrRes.json();
         if (purrData?.link && !purrData.error) {
           logger?.clearIssues();
-          logger?.explainSuccess(`Grabbed a furry/kemonomimi GIF from PurrBot in ${latencyMs}ms.`);
+          logger?.explainSuccess(`Grabbed a furry GIF from PurrBot in ${latencyMs}ms.`);
           return { url: purrData.link, source: 'PurrBot Furry / Kemonomimi' };
         }
       }
     } catch (err) {
-      logger?.log('HTTP:ERR', `Tier 1 [PurrBot] failed, falling back to Tier 2`, { error: err?.message || String(err) });
+      logger?.log('HTTP:ERR', `PurrBot failed`, { error: err?.message || String(err) });
     }
   }
 
@@ -251,10 +249,8 @@ async function fetchActionGif(action, vibe = 'furry', logger = null) {
     const endpoint = nekosMap[action] || 'cuddle';
     const nekosUrl = makeUrl('nekos.best', `/api/v2/${endpoint}`);
     const t0 = performance.now();
-    logger?.log('HTTP:REQ', `Tier 2 [Nekos.best] GET ${nekosUrl}`, { timeoutMs: 5000 });
     const res = await fetch(nekosUrl, { signal: AbortSignal.timeout(5000) });
     const latencyMs = (performance.now() - t0).toFixed(2);
-    logger?.log('HTTP:RES', `Tier 2 [Nekos.best] responded HTTP ${res.status} in ${latencyMs}ms`);
     if (res.ok) {
       const data = await res.json();
       const item = data?.results?.[0];
@@ -268,7 +264,7 @@ async function fetchActionGif(action, vibe = 'furry', logger = null) {
       }
     }
   } catch (err) {
-    logger?.log('HTTP:ERR', `Tier 2 [Nekos.best] failed, falling back to Tier 3`, { error: err?.message || String(err) });
+    logger?.log('HTTP:ERR', `Nekos.best failed`, { error: err?.message || String(err) });
   }
 
   // 3. Waifu.pics
@@ -276,10 +272,8 @@ async function fetchActionGif(action, vibe = 'furry', logger = null) {
     const wEndpoint = waifuMap[action] || 'hug';
     const waifuUrl = makeUrl('api.waifu.pics', `/sfw/${wEndpoint}`);
     const t0 = performance.now();
-    logger?.log('HTTP:REQ', `Tier 3 [Waifu.pics] GET ${waifuUrl}`, { timeoutMs: 5000 });
     const wRes = await fetch(waifuUrl, { signal: AbortSignal.timeout(5000) });
     const latencyMs = (performance.now() - t0).toFixed(2);
-    logger?.log('HTTP:RES', `Tier 3 [Waifu.pics] responded HTTP ${wRes.status} in ${latencyMs}ms`);
     if (wRes.ok) {
       const wData = await wRes.json();
       if (wData?.url) {
@@ -289,10 +283,9 @@ async function fetchActionGif(action, vibe = 'furry', logger = null) {
       }
     }
   } catch (err) {
-    logger?.log('HTTP:ERR', `Tier 3 [Waifu.pics] failed; all GIF sources exhausted`, { error: err?.message || String(err) });
+    logger?.log('HTTP:ERR', `Waifu.pics failed`, { error: err?.message || String(err) });
   }
 
-  logger?.log('GIF:FAIL', `All 3 GIF tiers returned no valid media URL`);
   return null;
 }
 
@@ -322,7 +315,7 @@ async function fetchFurrySpecies(species = 'neko', logger = null) {
       }
     }
   } catch (err) {
-    logger?.log('HTTP:ERR', `Tier 1 [PurrBot] error, falling back to Nekos.best`, { error: err?.message || String(err) });
+    logger?.log('HTTP:ERR', `PurrBot error`, { error: err?.message || String(err) });
   }
 
   try {
@@ -339,73 +332,58 @@ async function fetchFurrySpecies(species = 'neko', logger = null) {
       }
     }
   } catch (err) {
-    logger?.log('HTTP:ERR', `Tier 2 [Nekos.best] failed`, { error: err?.message || String(err) });
+    logger?.log('HTTP:ERR', `Nekos.best failed`, { error: err?.message || String(err) });
   }
 
   return null;
 }
 
-// Fetch media ONLY from e621.net (NSFW / Adult Furry Booru)
+// PURE, DIRECT e621.net NSFW MEDIA FETCHER (NO DANBOORU, NO OTHER BOORUS)
 async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
-  const tagAliases = {
-    sfw: 'rating:s',
-    safe: 'rating:s',
-    nsfw: '-rating:s',
-    explicit: 'rating:e',
-    questionable: 'rating:q',
-    furry: 'anthro'
-  };
-
+  // Extract all tags, keeping explicit ratings untouched
   const cleanedUserTags = rawTags
     .split(/[\s,]+/)
     .map((t) => t.trim().toLowerCase())
-    .filter((t) => t && !t.startsWith('order:') && t !== 'random')
-    .map((t) => tagAliases[t] || t);
+    .filter((t) => t && !t.startsWith('order:') && t !== 'random');
 
   const allowedExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-  const apiTags = [...cleanedUserTags];
-  if (order === 'score') apiTags.push('order:score');
+  const queryTags = [...cleanedUserTags];
+  if (order === 'score') queryTags.push('order:score');
 
-  const e621User = (process.env.E621_USERNAME || 'loomieaccount').trim();
-  const e621Key = (process.env.E621_API_KEY || 'q8iuHtnR1XvvWaYKyVB55hyk').trim();
-
-  const baseHeaders = {
-    'User-Agent': `FurryDiscordBot/5.9 (by ${e621User || 'Loomie'} on e621; emolarp.fans)`,
+  // Headers: Clean custom User-Agent without broken fake credentials
+  const headers = {
+    'User-Agent': 'FurryDiscordBot/6.0 (by Loomie on e621; emolarp.fans)',
     'Accept': 'application/json'
   };
 
-  const authHeaders = { ...baseHeaders };
-  if (e621User && e621Key) {
-    const token = Buffer.from(`${e621User}:${e621Key}`).toString('base64');
-    authHeaders['Authorization'] = `Basic ${token}`;
+  // Only attach Basic Auth if you configured real env variables
+  if (process.env.E621_USERNAME && process.env.E621_API_KEY) {
+    const token = Buffer.from(`${process.env.E621_USERNAME.trim()}:${process.env.E621_API_KEY.trim()}`).toString('base64');
+    headers['Authorization'] = `Basic ${token}`;
   }
 
-  logger?.log('E621:INIT', `Prepared e621.net Booru search query`, {
+  logger?.log('E621:INIT', `Searching e621.net`, {
     rawTags,
     order,
-    cleanedUserTags,
-    apiTags,
-    authenticated: Boolean(e621User && e621Key),
-    userAgent: baseHeaders['User-Agent']
+    queryTags,
+    hasAuth: Boolean(headers['Authorization'])
   });
 
-  function extractMediaFromPost(p) {
+  function extractMedia(p) {
     if (!p) return null;
     if (p.flags?.deleted || p.flags?.flagged_for_deletion) return null;
 
     const ext = (p.file?.ext || p.file_ext || '').toLowerCase();
     const md5 = p.file?.md5 || p.md5;
 
-    // Direct reconstruction fallback ensures media URLs are never blank
-    const reconstructed =
-      md5 && ext && allowedExts.includes(ext)
-        ? makeUrl('static1.e621.net', `/data/${md5.slice(0, 2)}/${md5.slice(2, 4)}/${md5}.${ext}`)
-        : null;
+    // Direct CDN links from static1.e621.net
+    const reconstructed = md5 && ext && allowedExts.includes(ext)
+      ? makeUrl('static1.e621.net', `/data/${md5.slice(0, 2)}/${md5.slice(2, 4)}/${md5}.${ext}`)
+      : null;
 
-    const reconstructedSample =
-      md5
-        ? makeUrl('static1.e621.net', `/data/sample/${md5.slice(0, 2)}/${md5.slice(2, 4)}/${md5}.jpg`)
-        : null;
+    const reconstructedSample = md5
+      ? makeUrl('static1.e621.net', `/data/sample/${md5.slice(0, 2)}/${md5.slice(2, 4)}/${md5}.jpg`)
+      : null;
 
     const isLarge = (p.file?.size || 0) > 8_000_000;
 
@@ -422,9 +400,9 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
     ].filter((u) => typeof u === 'string' && u.startsWith('http'));
 
     const chosenUrl = candidates[0] || null;
-    const inferredExt =
-      ext ||
-      (chosenUrl ? chosenUrl.split('?')[0].split('.').pop()?.toLowerCase() : 'jpg');
+    if (!chosenUrl) return null;
+
+    const inferredExt = ext || chosenUrl.split('?')[0].split('.').pop()?.toLowerCase() || 'jpg';
 
     return {
       post: p,
@@ -433,123 +411,89 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
     };
   }
 
-  const queryStr = encodeURIComponent(apiTags.join(' '));
+  const queryStr = encodeURIComponent(queryTags.join(' '));
 
-  // Endpoints on e621.net ONLY (Dedicated Random Post -> 75 Newest Posts Listing -> Score Listing)
-  const e621Endpoints = [
-    {
-      label: 'e621.net /posts/random.json',
-      url: `${makeUrl('e621.net', '/posts/random.json')}?tags=${queryStr}`
-    },
-    {
-      label: 'e621.net /posts.json (limit=75)',
-      url: `${makeUrl('e621.net', '/posts.json')}?limit=75&tags=${queryStr}`
-    },
-    {
-      label: 'e621.net /posts.json (order:score)',
-      url: `${makeUrl('e621.net', '/posts.json')}?limit=75&tags=${encodeURIComponent([...cleanedUserTags, 'order:score'].join(' '))}`
-    }
+  // Endpoints on e621.net ONLY:
+  // 1. Dedicated Random Endpoint (pulls random NSFW post matching tags)
+  // 2. Listing Endpoint (fetches 75 posts and randomly selects one)
+  const e621Urls = [
+    `${makeUrl('e621.net', '/posts/random.json')}?tags=${queryStr}`,
+    `${makeUrl('e621.net', '/posts.json')}?limit=75&tags=${queryStr}`
   ];
 
-  const headerVariants = [
-    { label: 'auth', headers: authHeaders },
-    { label: 'public', headers: baseHeaders }
-  ];
+  for (const url of e621Urls) {
+    const t0 = performance.now();
+    logger?.log('HTTP:REQ', `e621.net GET ${url}`);
 
-  for (const endpoint of e621Endpoints) {
-    for (const hVariant of headerVariants) {
-      const t0 = performance.now();
-      logger?.log('HTTP:REQ', `[${endpoint.label} - ${hVariant.label}] GET ${endpoint.url}`);
+    try {
+      const res = await fetch(url, {
+        headers,
+        signal: AbortSignal.timeout(8000)
+      });
+      const latencyMs = (performance.now() - t0).toFixed(2);
+      const rawText = await res.text();
 
-      try {
-        const res = await fetch(endpoint.url, {
-          headers: hVariant.headers,
-          signal: AbortSignal.timeout(8000)
-        });
-        const latencyMs = (performance.now() - t0).toFixed(2);
-        const rawText = await res.text();
+      logger?.log('HTTP:RES', `e621.net HTTP ${res.status} in ${latencyMs}ms`);
 
-        logger?.log('HTTP:RES', `[${endpoint.label} - ${hVariant.label}] HTTP ${res.status} in ${latencyMs}ms`, {
-          ok: res.ok,
-          status: res.status
-        });
-
-        // If credentials fail with 401, immediately continue to public header variant
-        if (res.status === 401 && hVariant.label === 'auth') {
-          logger?.log('E621:AUTH_FAIL', 'Basic Auth rejected by e621, retrying without auth headers');
-          continue;
-        }
-
-        if (res.status === 429) {
-          logger?.log('E621:WAIT', 'Rate limited (429), waiting 1000ms');
-          await sleep(1000);
-          continue;
-        }
-
-        if (!res.ok) {
-          logger?.explainIssue(`e621.net returned HTTP ${res.status}.`);
-          continue;
-        }
-
-        let data;
-        try {
-          data = JSON.parse(rawText);
-        } catch {
-          logger?.explainIssue(`e621.net returned non-JSON HTML (Cloudflare challenge).`);
-          continue;
-        }
-
-        let postsList = [];
-        if (data?.post) {
-          postsList = [data.post];
-        } else if (Array.isArray(data?.posts)) {
-          postsList = data.posts;
-        } else if (Array.isArray(data)) {
-          postsList = data;
-        }
-
-        const validPosts = postsList
-          .map(extractMediaFromPost)
-          .filter((item) => item && item.displayUrl && allowedExts.includes(item.ext));
-
-        logger?.log('E621:FILTER', `Filtered e621 posts`, {
-          rawCount: postsList.length,
-          validCount: validPosts.length
-        });
-
-        if (validPosts.length === 0) {
-          continue;
-        }
-
-        // Pick a random post from matching pool
-        const picked = validPosts[Math.floor(Math.random() * validPosts.length)];
-        const chosen = picked.post;
-        const artists = (chosen.tags?.artist || []).filter((a) => a !== 'conditional_dnp').slice(0, 3);
-        const species = (chosen.tags?.species || []).slice(0, 4);
-        const scoreVal = typeof chosen.score === 'object' ? (chosen.score?.total ?? 0) : (chosen.score ?? 0);
-
-        logger?.clearIssues();
-        logger?.explainSuccess(`Pulled post #${chosen.id} (\`.${picked.ext}\`, score ${scoreVal}) directly from e621.net in ${latencyMs}ms!`);
-
-        return {
-          id: chosen.id,
-          sourceName: 'e621.net',
-          rating: chosen.rating || 'e',
-          imageUrl: picked.displayUrl,
-          postUrl: makeUrl('e621.net', `/posts/${chosen.id}`),
-          score: scoreVal,
-          artists: artists.length ? artists.join(', ') : (chosen.tag_string_artist || 'Unknown'),
-          species: species.length ? species.join(', ') : (chosen.tag_string_species || 'Unspecified'),
-          searchedTags: cleanedUserTags.length ? cleanedUserTags.join(' ') : 'all posts'
-        };
-      } catch (err) {
-        logger?.log('HTTP:ERR', `[${endpoint.label}] threw exception`, { error: err?.message || String(err) });
-        logger?.explainIssue(`Connection to e621.net timed out or failed (${err?.message || 'network error'}).`);
+      if (!res.ok) {
+        logger?.explainIssue(`e621.net returned HTTP ${res.status}.`);
+        continue;
       }
+
+      let data;
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        logger?.explainIssue(`e621.net returned non-JSON response.`);
+        continue;
+      }
+
+      let postsList = [];
+      if (data?.post) {
+        postsList = [data.post];
+      } else if (Array.isArray(data?.posts)) {
+        postsList = data.posts;
+      } else if (Array.isArray(data)) {
+        postsList = data;
+      }
+
+      const validPosts = postsList
+        .map(extractMedia)
+        .filter((item) => item && item.displayUrl && allowedExts.includes(item.ext));
+
+      logger?.log('E621:FILTER', `Filtered e621.net results`, {
+        rawCount: postsList.length,
+        validCount: validPosts.length
+      });
+
+      if (validPosts.length === 0) continue;
+
+      // Pick a random post from the matches
+      const picked = validPosts[Math.floor(Math.random() * validPosts.length)];
+      const chosen = picked.post;
+      const artists = (chosen.tags?.artist || []).filter((a) => a !== 'conditional_dnp').slice(0, 3);
+      const species = (chosen.tags?.species || []).slice(0, 4);
+      const scoreVal = typeof chosen.score === 'object' ? (chosen.score?.total ?? 0) : (chosen.score ?? 0);
+
+      logger?.clearIssues();
+      logger?.explainSuccess(`Got post #${chosen.id} (\`.${picked.ext}\`) directly from e621.net in ${latencyMs}ms!`);
+
+      return {
+        id: chosen.id,
+        imageUrl: picked.displayUrl,
+        postUrl: makeUrl('e621.net', `/posts/${chosen.id}`),
+        score: scoreVal,
+        artists: artists.length ? artists.join(', ') : (chosen.tag_string_artist || 'Unknown'),
+        species: species.length ? species.join(', ') : (chosen.tag_string_species || 'Unspecified'),
+        searchedTags: cleanedUserTags.length ? cleanedUserTags.join(' ') : 'all posts',
+        rating: chosen.rating || 'e'
+      };
+    } catch (err) {
+      logger?.log('HTTP:ERR', `e621 fetch failed`, { error: err?.message || String(err) });
+      logger?.explainIssue(`Connection to e621.net failed (${err?.message || 'network error'}).`);
     }
   }
 
-  logger?.log('E621:FAIL', `All e621.net queries returned 0 valid posts`);
   return null;
 }
 
@@ -607,16 +551,10 @@ function buildActionCopy(action, fromId, toId, logger = null) {
     }
   };
   const chosen = copyMap[action];
-  logger?.log('COPY:BUILD', `Constructed action copy template for "${action}"`, {
-    fromId,
-    toId,
-    title: chosen?.title,
-    backLabel: chosen?.backLabel
-  });
   return chosen;
 }
 
-function buildAssetButtons(avatarUrl, bannerUrl, decoUrl, profileUserId = null, logger = null) {
+function buildAssetButtons(avatarUrl, bannerUrl, decoUrl, profileUserId = null) {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setLabel('View PFP :3')
@@ -719,7 +657,7 @@ function getCommandDefinitions(forEverywhere = true) {
 
     new SlashCommandBuilder()
       .setName('snuggle')
-      .setDescription('Wrap a cutie in cozy oversized-hoodie & thigh-high snuggles uwu!')
+      .setDescription('Wrap a cutie in cozy snuggles uwu!')
       .addUserOption((opt) => opt.setName('cutie').setDescription('Who are we snuggling? :3').setRequired(true))
       .addStringOption(addVibeOption),
 
@@ -731,13 +669,13 @@ function getCommandDefinitions(forEverywhere = true) {
 
     new SlashCommandBuilder()
       .setName('lick')
-      .setDescription('Give a cutie a playful catboy/puppy lick~ nya!')
+      .setDescription('Give a cutie a playful lick~ nya!')
       .addUserOption((opt) => opt.setName('cutie').setDescription('Who gets a playful lick? >w<').setRequired(true))
       .addStringOption(addVibeOption),
 
     new SlashCommandBuilder()
       .setName('kiss')
-      .setDescription('Give a cutie a sweet pastel forehead or cheek kiss~ ^w^')
+      .setDescription('Give a cutie a sweet kiss~ ^w^')
       .addUserOption((opt) => opt.setName('cutie').setDescription('Who gets a sweet kiss? :3').setRequired(true))
       .addStringOption(addVibeOption),
 
@@ -749,7 +687,7 @@ function getCommandDefinitions(forEverywhere = true) {
 
     new SlashCommandBuilder()
       .setName('earscratch')
-      .setDescription('Scratch behind a cutie’s fluffy ears until their tail thumps~ :3')
+      .setDescription('Scratch behind a cutie’s fluffy ears~ :3')
       .addUserOption((opt) => opt.setName('cutie').setDescription('Whose fluffy ears are we scratching? ^w^').setRequired(true))
       .addStringOption(addVibeOption),
 
@@ -761,7 +699,7 @@ function getCommandDefinitions(forEverywhere = true) {
 
     new SlashCommandBuilder()
       .setName('bite')
-      .setDescription('Give a cutie a playful little catboy love-nibble~ nom!')
+      .setDescription('Give a cutie a playful love-nibble~ nom!')
       .addUserOption((opt) => opt.setName('cutie').setDescription('Who gets a gentle nibble? :3').setRequired(true))
       .addStringOption(addVibeOption),
 
@@ -801,12 +739,12 @@ function getCommandDefinitions(forEverywhere = true) {
 
     new SlashCommandBuilder()
       .setName('cutemeter')
-      .setDescription('Scan a cutie with the official thigh-high & paw cuteness meter! ^w^')
+      .setDescription('Scan a cutie with the cuteness meter! ^w^')
       .addUserOption((opt) => opt.setName('cutie').setDescription('Who are we scanning? (defaults to you!)').setRequired(false)),
 
     new SlashCommandBuilder()
       .setName('ship')
-      .setDescription('Check the cozy compatibility score between two cuties~ :3')
+      .setDescription('Check compatibility score between two cuties~ :3')
       .addUserOption((opt) => opt.setName('cutie1').setDescription('First cutie!').setRequired(true))
       .addUserOption((opt) => opt.setName('cutie2').setDescription('Second cutie!').setRequired(true)),
 
@@ -829,7 +767,7 @@ function getCommandDefinitions(forEverywhere = true) {
       .setName('stats')
       .setDescription('Check furry uptime, ping & total affection delivered! :3'),
 
-    // Force-sync command
+    // Update slash command
     new SlashCommandBuilder()
       .setName('update')
       .setDescription('Force re-register & sync slash commands to server/global! (Owner only) :3')
@@ -851,7 +789,7 @@ function getCommandDefinitions(forEverywhere = true) {
       .addStringOption((opt) =>
         opt
           .setName('command')
-          .setDescription('Command & args (or "e621" alone to rerun your most recent e621 search!) :3')
+          .setDescription('Command & args (e.g. "e621 dragon", "update", "stats") :3')
           .setRequired(true)
       )
       .addStringOption((opt) =>
@@ -1002,7 +940,7 @@ function buildE621Response(post, rawTags = '', order = 'newest', logger = null) 
       .setURL(post.postUrl)
   );
 
-  const ratingMap = { s: 'Safe (SFW)', q: 'Questionable', e: 'Explicit (NSFW)' };
+  const ratingMap = { s: 'Safe', q: 'Questionable', e: 'Explicit (NSFW)' };
   const ratingLabel = ratingMap[post.rating] || 'NSFW / Adult';
 
   logger?.log('EMBED:E621', `Constructed e621 embed & action row`, {
@@ -1016,7 +954,7 @@ function buildE621Response(post, rawTags = '', order = 'newest', logger = null) 
     embeds: [{
       title: `e621 Booru Pull~ ${pick('cute', logger)}`,
       description:
-        `*ears perk up and tail wags!* Found a fresh post for \`${post.searchedTags}\`! ${pick('online', logger)}\n\n` +
+        `*ears perk up and tail wags!* Found an adult post for \`${post.searchedTags}\`! ${pick('online', logger)}\n\n` +
         `• **Artist:** \`${post.artists}\` • **Tags/Species:** \`${post.species}\` • **Score:** \`${post.score}\` • **Rating:** \`${ratingLabel}\`\n` +
         `• [emolarp.fans](${SITE_URL}) :3`,
       color: PASTEL_PINK,
@@ -1075,7 +1013,7 @@ async function parseLogCommandInput(interaction, logger) {
   }
   const remainderWithoutMentions = remainder.replace(mentionRegex, '').replace(/\s+/g, ' ').trim();
 
-  async function resolveUserById(rawId, label) {
+  async function resolveUserById(rawId) {
     const cleanId = rawId.replace(/[<@!>]/g, '').trim();
     if (!cleanId) return null;
     try {
@@ -1087,12 +1025,12 @@ async function parseLogCommandInput(interaction, logger) {
   }
 
   let cutie = explicitOptions.cutie;
-  if (!cutie && inlineKv.cutie) cutie = await resolveUserById(inlineKv.cutie, 'inlineKv.cutie');
-  if (!cutie && extractedUserIds[0]) cutie = await resolveUserById(extractedUserIds[0], 'positional_user_1');
+  if (!cutie && inlineKv.cutie) cutie = await resolveUserById(inlineKv.cutie);
+  if (!cutie && extractedUserIds[0]) cutie = await resolveUserById(extractedUserIds[0]);
 
   let cutie2 = explicitOptions.cutie2;
-  if (!cutie2 && inlineKv.cutie2) cutie2 = await resolveUserById(inlineKv.cutie2, 'inlineKv.cutie2');
-  if (!cutie2 && extractedUserIds[1]) cutie2 = await resolveUserById(extractedUserIds[1], 'positional_user_2');
+  if (!cutie2 && inlineKv.cutie2) cutie2 = await resolveUserById(inlineKv.cutie2);
+  if (!cutie2 && extractedUserIds[1]) cutie2 = await resolveUserById(extractedUserIds[1]);
 
   let vibe = explicitOptions.vibe || inlineKv.vibe || null;
   let species = explicitOptions.species || inlineKv.species || null;
@@ -1166,7 +1104,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     invokerTag: interaction.user.tag
   });
 
-  // /e621 — Pull furry NSFW images & GIFs directly from e621.net
+  // /e621 — Direct e621.net adult booru pull
   if (commandName === 'e621') {
     const rawTags = params.tags !== undefined && params.tags !== '' ? params.tags : lastE621Query.tags;
     const order = params.order || lastE621Query.order || 'newest';
@@ -1178,7 +1116,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     if (!post) {
       logger?.log('CMD:E621_EMPTY', `No valid post returned from e621.net for tags="${rawTags}"`);
       return {
-        content: `Awr~ I couldn't find any image/GIF posts on e621.net for \`${rawTags || 'your search'}\`! Try simpler underscore tags like \`deer\`, \`fox cuddle\`, or \`dragon\`, >_<`
+        content: `Awr~ I couldn't find any adult posts on e621.net for \`${rawTags || 'your search'}\`! Try simpler underscore tags like \`deer\`, \`dragon\`, or \`fox\`, >_<`
       };
     }
 
@@ -1229,7 +1167,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
           `• [emolarp.fans](${SITE_URL}) ^w^`,
         color: PASTEL_PINK,
         fields,
-        footer: { text: `furry bot v5.9 • update requested by Loomie :3` }
+        footer: { text: `furry bot v6.0 • update requested by Loomie :3` }
       }]
     };
   }
@@ -1260,14 +1198,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
 
   // /oc
   if (commandName === 'oc') {
-    const t0 = performance.now();
-    logger?.log('CMD:OC', `Fetching owner profile OWNER_ID="${OWNER_ID}" (force=true)`);
-    const loomieUser = await client.users.fetch(OWNER_ID, { force: true }).catch((err) => {
-      logger?.log('CMD:OC_WARN', `Failed to fetch OWNER_ID, falling back to interaction.user`, {
-        error: err?.message || String(err)
-      });
-      return interaction.user;
-    });
+    const loomieUser = await client.users.fetch(OWNER_ID, { force: true }).catch(() => interaction.user);
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -1300,11 +1231,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
   // Target Actions
   if (TARGET_ACTIONS.includes(commandName)) {
     const action = commandName;
-    let cutie = params.cutie;
-    if (!cutie) {
-      cutie = interaction.user;
-      logger?.log('CMD:TARGET_FALLBACK', `No target cutie provided for /${action}; defaulting to invoker`);
-    }
+    let cutie = params.cutie || interaction.user;
     const vibe = params.vibe || 'furry';
 
     const gif = await fetchActionGif(action, vibe, logger);
@@ -1395,13 +1322,13 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     const meter = `[${'='.repeat(bars)}${'-'.repeat(10 - bars)}]`;
 
     let verdict = `Certified adorable! Deserves unlimited headpats ${pick('headpat', logger)}`;
-    if (score >= 95) verdict = `MAXIMUM OVERLOAD!! Certified pastel thigh-high & oversized-hoodie icon!! ${pick('online', logger)}`;
+    if (score >= 95) verdict = `MAXIMUM OVERLOAD!! Certified icon!! ${pick('online', logger)}`;
     else if (score >= 85) verdict = `Super fluffy & dangerously cute! Extra snuggles required ${pick('snuggle', logger)}`;
 
     return {
       embeds: [{
-        title: `Official Paw & Thigh-High Cute Meter~ ${pick('cute', logger)}`,
-        description: `*ears perk up and scanner beeps happily!*\n\n**Target:** <@${cutie.id}>\n**Cuteness Score:** **${score}%** \`${meter}\`\n**Verdict:** ${verdict}\n\n[emolarp.fans](${SITE_URL}) :3`,
+        title: `Official Cute Meter~ ${pick('cute', logger)}`,
+        description: `*ears perk up and scanner beeps!*\n\n**Target:** <@${cutie.id}>\n**Cuteness Score:** **${score}%** \`${meter}\`\n**Verdict:** ${verdict}\n\n[emolarp.fans](${SITE_URL}) :3`,
         color: PASTEL_PINK,
         thumbnail: { url: cutie.displayAvatarURL({ size: 256 }) }
       }]
@@ -1410,19 +1337,14 @@ async function executeBotCommand(commandName, params, interaction, logger = null
 
   // /ship
   if (commandName === 'ship') {
-    let c1 = params.cutie;
-    let c2 = params.cutie2;
-    if (!c1) c1 = interaction.user;
-    if (!c2) c2 = client.user || interaction.user;
+    let c1 = params.cutie || interaction.user;
+    let c2 = params.cutie2 || client.user || interaction.user;
 
     const split1 = Math.ceil(c1.username.length / 2);
     const split2 = Math.floor(c2.username.length / 2);
-    const name1 = c1.username.slice(0, split1);
-    const name2 = c2.username.slice(split2);
-    const shipName = `${name1}${name2}`;
+    const shipName = `${c1.username.slice(0, split1)}${c2.username.slice(split2)}`;
     const combined = BigInt(c1.id) + BigInt(c2.id);
-    const mod41 = Number(combined % 41n);
-    const score = mod41 + 60;
+    const score = Number(combined % 41n) + 60;
 
     return {
       embeds: [{
@@ -1440,7 +1362,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
 
   // /8ball
   if (commandName === '8ball') {
-    let question = params.question || 'Will I get extra headpats and cozy snuggles today?';
+    let question = params.question || 'Will I get extra headpats today?';
     const replies = [
       `Yeeeesss, 100%!! ${pick('online', logger)}`,
       `My ears perked up—signs point to yes, uwu~ :3`,
@@ -1450,8 +1372,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
       `Awr, doesn't look like it right now >_<`,
       `Nuh-uh, my paws say no this time! ${pick('blush', logger)}`
     ];
-    const idx = Math.floor(Math.random() * replies.length);
-    const answer = replies[idx];
+    const answer = replies[Math.floor(Math.random() * replies.length)];
 
     return {
       embeds: [{
@@ -1502,7 +1423,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
           ],
           timestamp: new Date().toISOString()
         }],
-        components: buildAssetButtons(avatarUrl, bannerUrl, decoUrl, fullUser.id, logger)
+        components: buildAssetButtons(avatarUrl, bannerUrl, decoUrl, fullUser.id)
       };
     } catch {
       return {
@@ -1595,7 +1516,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       const post = await fetchE621Post(rawTags, order || 'newest');
       if (!post) {
-        return interaction.editReply(`Awr~ Couldn't find another post for \`${rawTags || 'those tags'}\` right now! >_<`);
+        return interaction.editReply(`Awr~ Couldn't find another post on e621.net for \`${rawTags || 'those tags'}\` right now! >_<`);
       }
       await interaction.editReply(buildE621Response(post, rawTags, order || 'newest'));
       return;
@@ -1744,4 +1665,3 @@ http.createServer((req, res) => {
 });
 
 client.login(process.env.DISCORD_TOKEN);
-```
