@@ -404,7 +404,7 @@ async function fetchFurrySpecies(species = 'neko', logger = null) {
   return null;
 }
 
-// Fetch media from e621.net (rate-limit safe 1.1s spacing + public/auth fallback)
+// Fetch media from e621.net (supports both { posts: [...] } and top-level [...] array responses!)
 async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
   const cleanedUserTags = rawTags
     .split(/[\s,]+/)
@@ -420,7 +420,6 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
     );
 
   const allowedExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-
   const apiTags = [...cleanedUserTags];
   if (order === 'score') apiTags.push('order:score');
 
@@ -428,7 +427,7 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
   const e621Key = (process.env.E621_API_KEY || 'q8iuHtnR1XvvWaYKyVB55hyk').trim();
 
   const baseHeaders = {
-    'User-Agent': `FurryDiscordBot/5.4 (by ${e621User} on e621)`,
+    'User-Agent': `FurryDiscordBot/5.6 (by ${e621User} on e621)`,
     'Accept': 'application/json'
   };
 
@@ -437,13 +436,6 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
     const token = Buffer.from(`${e621User}:${e621Key}`).toString('base64');
     authHeaders['Authorization'] = `Basic ${token}`;
   }
-
-  // Try public e621.net first (bypasses new-account Safe Mode / blacklist filters),
-  // then authenticated e621.net after a 1.1s rate-limit pause if needed
-  const attempts = [
-    { label: 'e621.net (public)', host: makeUrl('e621.net', '/posts.json'), tags: apiTags, headers: baseHeaders },
-    { label: 'e621.net (auth)', host: makeUrl('e621.net', '/posts.json'), tags: apiTags, headers: authHeaders }
-  ];
 
   logger?.log('E621:INIT', `Prepared Booru search query`, {
     rawTags,
@@ -454,18 +446,23 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
     userAgent: baseHeaders['User-Agent']
   });
 
-  for (let i = 0; i < attempts.length; i++) {
+  const e621Attempts = [
+    { label: 'e621.net (auth)', host: makeUrl('e621.net', '/posts.json'), tags: apiTags, headers: authHeaders },
+    { label: 'e621.net (public)', host: makeUrl('e621.net', '/posts.json'), tags: apiTags, headers: baseHeaders }
+  ];
+
+  for (let i = 0; i < e621Attempts.length; i++) {
     if (i > 0) {
-      logger?.log('RATE_LIMIT:WAIT', `Waiting 1100ms before Attempt #${i + 1} to respect e621's 2 req/s limit`);
+      logger?.log('RATE_LIMIT:WAIT', `Waiting 1100ms before Attempt #${i + 1}`);
       await sleep(1100);
     }
 
-    const { label, host, tags, headers } = attempts[i];
+    const { label, host, tags, headers } = e621Attempts[i];
     const query = encodeURIComponent(tags.join(' '));
     const url = `${host}?limit=75&tags=${query}`;
     const t0 = performance.now();
 
-    logger?.log('HTTP:REQ', `Attempt #${i + 1}/${attempts.length} [${label}] GET ${url}`, { tags });
+    logger?.log('HTTP:REQ', `Attempt #${i + 1} [${label}] GET ${url}`, { tags });
 
     try {
       const res = await fetch(url, {
@@ -473,90 +470,87 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
         signal: AbortSignal.timeout(8000)
       });
       const latencyMs = (performance.now() - t0).toFixed(2);
+      const rawText = await res.text();
       logger?.log('HTTP:RES', `Attempt #${i + 1} [${label}] HTTP ${res.status} in ${latencyMs}ms`, {
         ok: res.ok,
         status: res.status
       });
 
       if (!res.ok) {
-        if (res.status === 401 || res.status === 403) {
-          logger?.explainIssue(`${label} rejected the request (HTTP ${res.status}) — verify E621_USERNAME and E621_API_KEY.`);
-        } else if (res.status === 429) {
-          logger?.explainIssue(`${label} rate-limited the bot (HTTP 429) — wait a few seconds before rolling again.`);
-        } else if (res.status === 422) {
-          logger?.explainIssue(`${label} rejected the search tags (HTTP 422) — check tag syntax or reduce the number of tags.`);
-        } else {
-          logger?.explainIssue(`${label} returned HTTP ${res.status}.`);
-        }
+        logger?.explainIssue(`${label} returned HTTP ${res.status} (${rawText.slice(0, 80)}).`);
         continue;
       }
 
-      const data = await res.json();
-      const rawCount = data?.posts?.length || 0;
+      let data;
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        logger?.explainIssue(`${label} returned non-JSON HTML, trying next fallback.`);
+        continue;
+      }
 
-      const validPosts = (data?.posts || [])
+      // Support BOTH { posts: [...] } and top-level [...] arrays!
+      const postsList = Array.isArray(data) ? data : (Array.isArray(data?.posts) ? data.posts : []);
+      const rawCount = postsList.length;
+
+      const validPosts = postsList
         .map((p) => {
-          const ext = p?.file?.ext?.toLowerCase();
-          const md5 = p?.file?.md5;
+          const ext = (p?.file?.ext || p?.file_ext || '').toLowerCase();
+          const md5 = p?.file?.md5 || p?.md5;
           const directUrl =
             p?.file?.url ||
+            p?.file_url ||
             (md5 && ext
               ? makeUrl('static1.e621.net', `/data/${md5.slice(0, 2)}/${md5.slice(2, 4)}/${md5}.${ext}`)
               : null);
           const displayUrl =
-            ext === 'gif' ? directUrl : (p?.file?.size > 8_000_000 && p?.sample?.url ? p.sample.url : directUrl);
+            ext === 'gif'
+              ? directUrl
+              : ((p?.file?.size > 8_000_000 && p?.sample?.url) ? p.sample.url : directUrl);
           return { post: p, ext, displayUrl };
         })
         .filter((item) => item.displayUrl && allowedExts.includes(item.ext));
 
-      logger?.log('E621:FILTER', `Filtered posts for valid extensions`, {
+      logger?.log('E621:FILTER', `Filtered e621 posts`, {
         label,
+        isTopLevelArray: Array.isArray(data),
         rawPostCount: rawCount,
-        validPostCount: validPosts.length,
-        responseKeys: Object.keys(data || {})
+        validPostCount: validPosts.length
       });
 
       if (rawCount === 0) {
-        logger?.explainIssue(`${label} responded OK, but found 0 posts matching \`${cleanedUserTags.join(' ') || 'all posts'}\` (check e621 Settings -> Account/Blacklist if logged in).`);
+        logger?.explainIssue(`${label} returned 0 posts for \`${cleanedUserTags.join(' ') || 'all posts'}\`.`);
         continue;
       }
 
       if (validPosts.length === 0) {
-        logger?.explainIssue(`${label} found ${rawCount} posts for \`${cleanedUserTags.join(' ')}\`, but all of them were \`.webm\`/\`.swf\` videos.`);
+        logger?.explainIssue(`${label} found ${rawCount} posts, but none had a displayable image/GIF URL.`);
         continue;
       }
 
       const poolLimit = Math.min(validPosts.length, order === 'score' ? 15 : validPosts.length);
-      const selectedIdx = Math.floor(Math.random() * poolLimit);
-      const picked = validPosts[selectedIdx];
+      const picked = validPosts[Math.floor(Math.random() * poolLimit)];
       const chosen = picked.post;
-
       const artists = (chosen.tags?.artist || []).filter((a) => a !== 'conditional_dnp').slice(0, 3);
       const species = (chosen.tags?.species || []).slice(0, 4);
-
-      const result = {
-        id: chosen.id,
-        imageUrl: picked.displayUrl,
-        postUrl: `${host.replace('/posts.json', '')}/posts/${chosen.id}`,
-        score: chosen.score?.total ?? 0,
-        artists: artists.length ? artists.join(', ') : 'Unknown',
-        species: species.length ? species.join(', ') : 'Unspecified',
-        searchedTags: cleanedUserTags.length ? cleanedUserTags.join(' ') : 'all posts'
-      };
-
-      logger?.log('E621:SELECT', `Selected post #${result.id} from ${label}`, {
-        id: result.id,
-        ext: picked.ext,
-        score: result.score,
-        imageUrl: result.imageUrl
-      });
+      const scoreVal = typeof chosen.score === 'object' ? (chosen.score?.total ?? 0) : (chosen.score ?? 0);
 
       logger?.clearIssues();
-      logger?.explainSuccess(`Pulled post #${result.id} (\`.${picked.ext}\`, score ${result.score}) from ${label} out of ${validPosts.length} matching results in ${latencyMs}ms.`);
-      return result;
+      logger?.explainSuccess(`Pulled post #${chosen.id} (\`.${picked.ext}\`, score ${scoreVal}) from ${label} out of ${validPosts.length} matching results in ${latencyMs}ms.`);
+
+      return {
+        id: chosen.id,
+        sourceName: 'e621.net',
+        imageUrl: picked.displayUrl,
+        postUrl: makeUrl('e621.net', `/posts/${chosen.id}`),
+        score: scoreVal,
+        artists: artists.length ? artists.join(', ') : (chosen.tag_string_artist || 'Unknown'),
+        species: species.length ? species.join(', ') : (chosen.tag_string_species || 'Unspecified'),
+        searchedTags: cleanedUserTags.length ? cleanedUserTags.join(' ') : 'all posts'
+      };
     } catch (err) {
       logger?.log('HTTP:ERR', `Attempt #${i + 1} [${label}] threw exception`, { error: err?.message || String(err) });
-      logger?.explainIssue(`Connection to ${label} failed or timed out (${err?.message || 'network error'}).`);
+      logger?.explainIssue(`Connection to ${label} failed (${err?.message || 'network error'}).`);
     }
   }
 
@@ -1012,22 +1006,24 @@ const ALL_COMMANDS = [
   'log'
 ];
 
-// Helper to build an e621 embed + Roll Again / View Post buttons
+// Helper to build a Booru embed + Roll Again / View Post buttons
 function buildE621Response(post, rawTags = '', order = 'newest', logger = null) {
   const safeCustomId = `e621:${order}:${rawTags.slice(0, 75)}`;
+  const sourceLabel = post.sourceName || 'e621.net';
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(safeCustomId)
       .setLabel('Roll Again :3')
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
-      .setLabel('View on e621 ^w^')
+      .setLabel(`View on ${sourceLabel} ^w^`)
       .setStyle(ButtonStyle.Link)
       .setURL(post.postUrl)
   );
 
-  logger?.log('EMBED:E621', `Constructed e621 embed & action row`, {
+  logger?.log('EMBED:E621', `Constructed Booru embed & action row`, {
     postId: post.id,
+    sourceLabel,
     safeCustomId,
     postUrl: post.postUrl,
     imageUrl: post.imageUrl
@@ -1042,7 +1038,7 @@ function buildE621Response(post, rawTags = '', order = 'newest', logger = null) 
         `• [emolarp.fans](${SITE_URL}) :3`,
       color: PASTEL_PINK,
       image: { url: post.imageUrl },
-      footer: { text: `e621.net • Post #${post.id} • paws & thigh-highs certified :3` }
+      footer: { text: `${sourceLabel} • Post #${post.id} • paws & thigh-highs certified :3` }
     }],
     components: [row]
   };
@@ -1240,9 +1236,9 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     const post = await fetchE621Post(rawTags, order, logger);
 
     if (!post) {
-      logger?.log('CMD:E621_EMPTY', `No valid post returned from e621 for tags="${rawTags}"`);
+      logger?.log('CMD:E621_EMPTY', `No valid post returned from Booru for tags="${rawTags}"`);
       return {
-        content: `Awr~ I couldn't find any image/GIF posts on e621 for \`${rawTags || 'your search'}\`! Try simpler underscore tags like \`deer\`, \`fox cuddle\`, or \`cat_boy\`, >_<`
+        content: `Awr~ I couldn't find any image/GIF posts on e621 for \`${rawTags || 'your search'}\`! Try simpler underscore tags like \`deer\`, \`kemonomimi\`, or \`cat_boy\`, >_<`
       };
     }
 
@@ -1646,7 +1642,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       const post = await fetchE621Post(rawTags, order || 'newest');
       if (!post) {
-        return interaction.editReply(`Awr~ Couldn't find another e621 post for \`${rawTags || 'those tags'}\` right now! >_<`);
+        return interaction.editReply(`Awr~ Couldn't find another post for \`${rawTags || 'those tags'}\` right now! >_<`);
       }
       await interaction.editReply(buildE621Response(post, rawTags, order || 'newest'));
       return;
