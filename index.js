@@ -60,7 +60,7 @@ const KAOMOJI = {
   online: ['ฅ^•ﻌ•^ฅ', '(=^･ω･^=)', '(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧', '(≧◡≦)', '(=^･ｪ･^=)', '٩(◕‿◕｡)۶'],
   cute: ['(｡･ω･｡)', '(´｡• ᵕ •｡`)', '(=①ω①=)', '(●´ω｀●)', 'ﾐ・ﻌ・ﾐ', '/ᐠ｡ꞈ｡ᐟ\\'],
   snuggle: ['(つ≧▽≦)つ', '(づ｡◕‿‿◕｡)づ', '(⊃｡•́‿•̀｡)⊃', '(´,,•ω•,,)', '(* ^ ω ^)'],
-  headpat: ['(´･･)ﾉ(._.\`)', '(っ´ω`)ﾉ(╥ω╥)', '(づ｡◕‿‿◕｡)づ', 'ฅ^•ﻌ•^ฅ'],
+  headpat: ['(´･･)ﾉ(._.`)', '(っ´ω`)ﾉ(╥ω╥)', '(づ｡◕‿‿◕｡)づ', 'ฅ^•ﻌ•^ฅ'],
   affection: ['(っ˘з(˘⌣˘ )', '(｡・//ε//・｡)', '(⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄)', '(´ε｀ )♡', '(*≧ω≦*)', '(´▽`ʃ♡ƪ)'],
   playful: ['(=`ω´=)', '(・`ω´・)', 'ฅ^•ﻌ•^ฅ', '(≧◡≦)', '(*≧ω≦*)'],
   blush: ['(｡・//ε//・｡)', '(⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄)', '(*/ω\\)', '(´,,•ω•,,)', '(´｡• ᵕ •｡`)']
@@ -79,122 +79,71 @@ function recordAffection(fromId, toId) {
   return next;
 }
 
-const FURRY_GIFS = {
-  howl: [
-    { url: 'https://media.tenor.com/W24M5aM3O6UAAAAC/wolf-howl.gif', source: 'Fluffy Wolf Howl 🐺' },
-    { url: 'https://media.tenor.com/83p5Hj17xZMAAAAC/howl-wolf.gif', source: 'Cute Puppy Awooo 🐾' },
-    { url: 'https://media.tenor.com/T0b7i5j0oCcAAAAC/wolf-howling.gif', source: 'Midnight Wolf Awooo ✨' },
-    { url: 'https://media.tenor.com/w9lQ58aE0H4AAAAC/howling-wolf.gif', source: 'Cozy Fluffy Howl :3' }
-  ],
-  bonk: [
-    { url: 'https://media.tenor.com/TGq9Qk3zVvEAAAAC/bonk-doge.gif', source: 'Cartoon Toy Bonk 🔨' },
-    { url: 'https://media.tenor.com/4zP96wGj9eQAAAAC/cheems-bonk.gif', source: 'Playful Squeak Bonk ⭐' },
-    { url: 'https://media.tenor.com/o2xTsz8JcVEAAAAC/bonk-cat.gif', source: 'Soft Paw Tap Bonk 🐾' },
-    { url: 'https://media.tenor.com/1mO5xT2z7wMAAAAC/cat-bonk.gif', source: 'Gentle Noggin Bonk :3' }
-  ],
-  bite: [
-    { url: 'https://media.tenor.com/j4m9p3k5_XIAAAAC/cat-love-bite.gif', source: 'Gentle Love-Nibble nom! :3' },
-    { url: 'https://media.tenor.com/e8p2X7m9wK8AAAAC/gentle-nibble.gif', source: 'Playful Soft Nibble 🐾' }
-  ],
-  hug: [
-    { url: 'https://media.tenor.com/kP8Zk9dK09IAAAAC/bear-hug.gif', source: 'Warm Bear Hug 🐻' },
-    { url: 'https://media.tenor.com/39JjCq6t4yEAAAAC/cat-hug.gif', source: 'Fluffy Cat Hug :3' },
-    { url: 'https://media.tenor.com/gK2T3v1xWfIAAAAC/fox-hug.gif', source: 'Fox Snuggle Hug 🦊' }
-  ],
-  snuggle: [
-    { url: 'https://media.tenor.com/mGzK8P_9QxAAAAAC/fox-cuddle.gif', source: 'Fluffy Fox Snuggles 🦊' },
-    { url: 'https://media.tenor.com/vH9Xg-K0y8EAAAAC/cat-cuddle.gif', source: 'Cozy Cuddle Pile :3' },
-    { url: 'https://media.tenor.com/64b0yN1CqJAAAAAC/dog-cuddle.gif', source: 'Puppy Snuggles 🐾' }
-  ],
-  lick: [
-    { url: 'https://media.tenor.com/O6Ld2_fM7ZAAAAAC/cat-lick.gif', source: 'Sweet Cat Lick 🐱' },
-    { url: 'https://media.tenor.com/7xQ9p3k5_XIAAAAC/dog-lick.gif', source: 'Puppy Cheek Lick 🐾' }
-  ],
-  kiss: [
-    { url: 'https://media.tenor.com/9w2x8K4d7rYAAAAC/cat-kiss.gif', source: 'Sweet Snoot Kiss 🐾' },
-    { url: 'https://media.tenor.com/3h7X3k6N4uIAAAAC/dog-kiss.gif', source: 'Fluffy Nose Kiss :3' }
-  ],
-  headpat: [
-    { url: 'https://media.tenor.com/3P6j2k4x8uEAAAAC/cat-head-pat.gif', source: 'Fluffy Ear Headpats :3' },
-    { url: 'https://media.tenor.com/8m5k2p9x4UAAAAAC/dog-head-pat.gif', source: 'Soft Paw Headpat 🐾' }
-  ],
-  earscratch: [
-    { url: 'https://media.tenor.com/2n8K7x1xWfIAAAAC/cat-ear-scratch.gif', source: 'Cozy Ear Scratches :3' },
-    { url: 'https://media.tenor.com/7P6j2k4x8uEAAAAC/dog-ear-scratch.gif', source: 'Fluffy Ear Scritches 🐾' }
-  ],
-  boop: [
-    { url: 'https://media.tenor.com/1x9Q4k8r2yEAAAAC/cat-boop.gif', source: 'Soft Paw Snoot Boop 🐾' },
-    { url: 'https://media.tenor.com/6h7X3k6N4uIAAAAC/dog-boop.gif', source: 'Puppy Nose Boop :3' }
-  ],
-  pawhold: [
-    { url: 'https://media.tenor.com/s6n5P4o9bK8AAAAC/holding-paws.gif', source: 'Gentle Paw Holding 🐾' },
-    { url: 'https://media.tenor.com/O6Ld2_fM7ZAAAAAC/cat-holding-paws.gif', source: 'Soft Bean Squeeze :3' }
-  ],
-  milk: [
-    { url: 'https://media.tenor.com/8g7X3k6N4uIAAAAC/cat-milk.gif', source: 'Sweet Milk Delivery 🥛' },
-    { url: 'https://media.tenor.com/2x9Q4k8r2yEAAAAC/cat-drinking-milk.gif', source: 'Cozy Milk Saucer :3' }
-  ],
-  blush: [
-    { url: 'https://media.tenor.com/1mO5xT2z7wMAAAAC/cat-blush.gif', source: 'Fluffy Cat Blush :3' },
-    { url: 'https://media.tenor.com/3m5k2p9x4UAAAAAC/furry-blush.gif', source: 'Hiding Behind Paws uwu' }
-  ],
-  tailwag: [
-    { url: 'https://media.tenor.com/eB3j5o5M03sAAAAC/tail-wag.gif', source: 'Happy Fluffy Tailwag 🦊' },
-    { url: 'https://media.tenor.com/w0Ld_Q2r9xUAAAAC/happy-tail-wag.gif', source: 'Excited Puppy Tail Wag 🐾' },
-    { url: 'https://media.tenor.com/tHqg2u4dM44AAAAC/fox-tail-wag.gif', source: 'Fluffy Fox Swish :3' }
-  ],
-  purr: [
-    { url: 'https://media.tenor.com/9nFk1v2K3xUAAAAC/cat-purring.gif', source: 'Cozy Blanket Purrs 🐱' },
-    { url: 'https://media.tenor.com/6Xw6k1t5_uMAAAAC/kneading-blanket.gif', source: 'Biscuit Making & Purrs 🐾' },
-    { url: 'https://media.tenor.com/N7v9m5k6_W8AAAAC/cozy-purr-cat.gif', source: 'Warm Soft Purrs :3' }
-  ]
+const PURRBOT_MAP = {
+  snuggle: 'cuddle',
+  hug: 'hug',
+  lick: 'lick',
+  kiss: 'kiss',
+  headpat: 'pat',
+  earscratch: 'pat',
+  boop: 'poke',
+  bite: 'bite',
+  pawhold: 'fluff',
+  milk: 'feed',
+  bonk: 'slap',
+  blush: 'blush',
+  tailwag: 'tail',
+  purr: 'comfy'
 };
 
-async function fetchActionGif(action, vibe = 'furry') {
-  if (vibe === 'furry' || !['anime'].includes(vibe)) {
-    const list = FURRY_GIFS[action];
-    if (list && list.length) {
-      return list[Math.floor(Math.random() * list.length)];
-    }
+async function fetchActionGif(action) {
+  if (action === 'howl') {
+    try {
+      const e6Wolf = await fetchE621Post('wolf howl', 'newest', 'safe');
+      if (e6Wolf?.imageUrl) {
+        return { url: e6Wolf.imageUrl, source: `e621.net Wolf Howl #${e6Wolf.id} 🐺` };
+      }
+    } catch {}
+    return {
+      url: 'https://cdn.purrbot.site/sfw/okami/img/okami_009.jpg',
+      source: 'Okami Wolf Awooo 🐺'
+    };
   }
 
-  const nekosMap = {
-    snuggle: 'cuddle', hug: 'hug', lick: 'lick', kiss: 'kiss',
-    headpat: 'pat', earscratch: 'pat', boop: 'poke', bite: 'bite',
-    pawhold: 'handhold', milk: 'feed', blush: 'blush', tailwag: 'happy'
-  };
-
-  const endpoint = nekosMap[action] || 'cuddle';
+  const endpoint = PURRBOT_MAP[action] || 'cuddle';
   try {
-    const res = await fetch(`https://nekos.best/api/v2/${endpoint}`, { signal: AbortSignal.timeout(4000) });
+    const res = await fetch(`https://api.purrbot.site/v2/img/sfw/${endpoint}/gif`, { signal: AbortSignal.timeout(4000) });
     if (res.ok) {
       const data = await res.json();
-      const item = data?.results?.[0];
-      if (item?.url) return { url: item.url, source: 'Nekos.best Anime' };
+      if (data?.link && !data.error) {
+        return { url: data.link, source: `PurrBot Furry • ${endpoint} :3` };
+      }
     }
   } catch {}
 
-  const fallback = FURRY_GIFS[action] || FURRY_GIFS.snuggle;
-  return fallback[Math.floor(Math.random() * fallback.length)];
+  return {
+    url: 'https://cdn.purrbot.site/sfw/cuddle/gif/cuddle_023.gif',
+    source: 'Fluffy Snuggle :3'
+  };
 }
 
 async function fetchFurrySpecies(species = 'neko') {
+  const map = {
+    neko: 'neko/gif',
+    eevee: 'eevee/gif',
+    kitsune: 'kitsune/img',
+    okami: 'okami/img',
+    holo: 'holo/img'
+  };
+  const path = map[species] || 'neko/gif';
   try {
-    const res = await fetch(`https://api.purrbot.site/v2/img/sfw/${species}/gif`, { signal: AbortSignal.timeout(4000) });
+    const res = await fetch(`https://api.purrbot.site/v2/img/sfw/${path}`, { signal: AbortSignal.timeout(4000) });
     if (res.ok) {
       const data = await res.json();
       if (data?.link && !data.error) return data.link;
     }
   } catch {}
-  try {
-    const ep = ['kitsune', 'okami', 'holo'].includes(species) ? 'kitsune' : 'neko';
-    const res = await fetch(`https://nekos.best/api/v2/${ep}`, { signal: AbortSignal.timeout(4000) });
-    if (res.ok) {
-      const data = await res.json();
-      return data?.results?.[0]?.url || null;
-    }
-  } catch {}
-  return null;
+  return 'https://cdn.purrbot.site/sfw/neko/gif/neko_029.gif';
 }
 
 function extractE621Media(p) {
@@ -227,11 +176,9 @@ async function fetchE621Post(rawTags = '', order = 'newest', rating = 'nsfw', ex
     .map((t) => t.trim().toLowerCase())
     .filter((t) => t && !t.startsWith('order:') && t !== 'random');
 
-  const queryTags = [...cleanedUserTags];
-
-  for (const badTag of DEFAULT_BLACKLIST) {
-    const exists = cleanedUserTags.some((t) => t === badTag || t === `-${badTag}` || t.startsWith(`${badTag}:`));
-    if (!exists) queryTags.push(`-${badTag}`);
+  const queryTags = [];
+  for (const t of cleanedUserTags.slice(0, 3)) {
+    queryTags.push(t);
   }
 
   const hasRating = cleanedUserTags.some((t) => t.startsWith('rating:') || t.startsWith('-rating:'));
@@ -242,7 +189,9 @@ async function fetchE621Post(rawTags = '', order = 'newest', rating = 'nsfw', ex
     else if (rating === 'questionable') queryTags.push('rating:q');
   }
 
-  if (order === 'score') queryTags.push('order:score');
+  if (order === 'score' && queryTags.length < 5) {
+    queryTags.push('order:score');
+  }
 
   const headers = {
     'User-Agent': 'FurryDiscordBot/6.7 (by Loomie on e621; emolarp.fans)',
@@ -254,8 +203,8 @@ async function fetchE621Post(rawTags = '', order = 'newest', rating = 'nsfw', ex
 
   const encodedTags = encodeURIComponent(queryTags.join(' '));
   const urls = [
-    `https://e621.net/posts/random.json?tags=${encodedTags}`,
-    `https://e621.net/posts.json?limit=75&tags=${encodedTags}`
+    `https://e621.net/posts.json?limit=75&tags=${encodedTags}`,
+    `https://e621.net/posts/random.json?tags=${encodedTags}`
   ];
 
   for (const targetUrl of urls) {
@@ -264,12 +213,18 @@ async function fetchE621Post(rawTags = '', order = 'newest', rating = 'nsfw', ex
       if (!res.ok) continue;
       const data = await res.json();
       const list = Array.isArray(data) ? data : (data?.posts || (data?.post ? [data.post] : (data?.id ? [data] : [])));
-      const valid = list.map(extractE621Media).filter(Boolean);
-      if (!valid.length) continue;
+      const extracted = list.map(extractE621Media).filter(Boolean);
+      if (!extracted.length) continue;
 
-      let candidates = valid;
-      if (excludeId && valid.length > 1) {
-        const filtered = valid.filter((p) => String(p.post.id) !== String(excludeId));
+      const valid = extracted.filter(({ post }) => {
+        const tagStr = (typeof post.tag_string === 'string' ? post.tag_string : Object.values(post.tags || {}).flat().join(' ')).toLowerCase();
+        return !DEFAULT_BLACKLIST.some((bad) => tagStr.includes(bad));
+      });
+
+      const pool = valid.length ? valid : extracted;
+      let candidates = pool;
+      if (excludeId && pool.length > 1) {
+        const filtered = pool.filter((p) => String(p.post.id) !== String(excludeId));
         if (filtered.length) candidates = filtered;
       }
 
@@ -278,12 +233,11 @@ async function fetchE621Post(rawTags = '', order = 'newest', rating = 'nsfw', ex
 
       let artists = [];
       let species = [];
-      if (Array.isArray(chosen.tags)) {
-        species = chosen.tags.filter((t) => ['dragon', 'canine', 'feline', 'wolf', 'fox', 'scalie', 'otter', 'cat', 'dog', 'neko', 'sergal', 'protogen'].includes(t)).slice(0, 4);
-        if (!species.length) species = chosen.tags.slice(0, 3);
-      } else if (chosen.tags && typeof chosen.tags === 'object') {
+      if (chosen.tags && typeof chosen.tags === 'object') {
         artists = (chosen.tags.artist || []).filter((a) => a !== 'conditional_dnp').slice(0, 3);
         species = (chosen.tags.species || []).slice(0, 4);
+      } else if (Array.isArray(chosen.tags)) {
+        species = chosen.tags.filter((t) => ['dragon', 'canine', 'feline', 'wolf', 'fox', 'scalie', 'otter', 'cat', 'dog'].includes(t)).slice(0, 4);
       }
 
       return {
@@ -354,16 +308,21 @@ function buildE621Response(post, rawTags = '', order = 'newest', rating = 'nsfw'
       .setLabel('Bookmark 🐾')
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
-      .setLabel('Open Image 🖼️')
-      .setStyle(ButtonStyle.Link)
-      .setURL(post.imageUrl),
-    new ButtonBuilder()
       .setLabel('View on e621.net ^w^')
       .setStyle(ButtonStyle.Link)
       .setURL(post.postUrl)
   ];
 
-  if (post.videoUrl) {
+  if (post.imageUrl && post.imageUrl.startsWith('http')) {
+    buttons.splice(2, 0,
+      new ButtonBuilder()
+        .setLabel('Open Image 🖼️')
+        .setStyle(ButtonStyle.Link)
+        .setURL(post.imageUrl)
+    );
+  }
+
+  if (post.videoUrl && post.videoUrl.startsWith('http')) {
     buttons.push(
       new ButtonBuilder()
         .setLabel('Watch Video 🎥')
@@ -381,14 +340,19 @@ function buildE621Response(post, rawTags = '', order = 'newest', rating = 'nsfw'
   }
   desc += `• 💡 *Tap **"Roll Again :3"** or click **"Open Image 🖼️"**! :3*\n• [emolarp.fans](${SITE_URL}) :3`;
 
+  const embed = {
+    title: `${rating === 'explicit' || rating === 'nsfw' ? 'e621 Adult Booru Pull~' : 'e621 Booru Pull~'} ${pick('cute')}`,
+    description: desc,
+    color: PASTEL_PINK,
+    footer: { text: `e621.net • Post #${post.id} • Rating: ${ratingLabel} • paws certified :3` }
+  };
+
+  if (post.imageUrl && post.imageUrl.startsWith('http')) {
+    embed.image = { url: post.imageUrl };
+  }
+
   return {
-    embeds: [{
-      title: `${rating === 'explicit' || rating === 'nsfw' ? 'e621 Adult Booru Pull~' : 'e621 Booru Pull~'} ${pick('cute')}`,
-      description: desc,
-      color: PASTEL_PINK,
-      image: { url: post.imageUrl },
-      footer: { text: `e621.net • Post #${post.id} • Rating: ${ratingLabel} • paws certified :3` }
-    }],
+    embeds: [embed],
     components: [new ActionRowBuilder().addComponents(buttons)]
   };
 }
@@ -514,6 +478,10 @@ function getCommandDefinitions(forEverywhere = true) {
     new SlashCommandBuilder().setName('avatar').setDescription('Show HD avatar & profile!')
       .addStringOption((o) => o.setName('user_id').setDescription('User ID or mention').setRequired(false)),
     new SlashCommandBuilder().setName('stats').setDescription('Check bot uptime, ping & stats!'),
+    new SlashCommandBuilder().setName('log').setDescription('Run a command with technical trace info :3')
+      .addStringOption((o) => o.setName('command').setDescription('Command to test (e.g. e621, howl, stats)').setRequired(true))
+      .addStringOption((o) => o.setName('tags').setDescription('Tags for e621').setRequired(false))
+      .addUserOption((o) => o.setName('cutie').setDescription('Target cutie').setRequired(false)),
     new SlashCommandBuilder().setName('update').setDescription('Sync slash commands (Owner only)')
       .addStringOption((o) => o.setName('scope').setDescription('Scope').setRequired(false)
         .addChoices({ name: 'Server (Instant)', value: 'guild' }, { name: 'Global', value: 'global' }, { name: 'Both', value: 'both' }))
@@ -543,6 +511,9 @@ client.once(Events.ClientReady, async () => {
   console.log(`Logged in as ${client.user.tag}!`);
   client.user.setActivity('paws, snuggles & emolarp.fans :3', { type: 3 });
   try {
+    for (const [guildId] of client.guilds.cache) {
+      await deployCommands({ guildId, scope: 'guild' }).catch(() => {});
+    }
     await deployCommands({ scope: 'global' });
   } catch (err) {
     console.error('Initial deploy error:', err);
@@ -585,15 +556,16 @@ async function executeBotCommand(commandName, params, interaction) {
   if (commandName === 'furrypic') {
     const species = params.species || 'neko';
     const mediaUrl = await fetchFurrySpecies(species);
-    return {
-      embeds: [{
-        title: `Random SFW Furry Cutie~ ${pick('cute')}`,
-        description: `Fresh SFW **${species}** card for you! ${pick('online')} • [emolarp.fans](${SITE_URL})`,
-        color: PASTEL_PINK,
-        image: mediaUrl ? { url: mediaUrl } : undefined,
-        footer: { text: 'PurrBot SFW • paws certified :3' }
-      }]
+    const embed = {
+      title: `Random SFW Furry Cutie~ ${pick('cute')}`,
+      description: `Fresh SFW **${species}** card for you! ${pick('online')} • [emolarp.fans](${SITE_URL})`,
+      color: PASTEL_PINK,
+      footer: { text: 'PurrBot SFW • paws certified :3' }
     };
+    if (mediaUrl && mediaUrl.startsWith('http')) {
+      embed.image = { url: mediaUrl };
+    }
+    return { embeds: [embed] };
   }
 
   if (commandName === 'oc') {
@@ -602,43 +574,54 @@ async function executeBotCommand(commandName, params, interaction) {
       new ButtonBuilder().setLabel("Loomie's Profile :3").setStyle(ButtonStyle.Link).setURL(`https://discord.com/users/${OWNER_ID}`),
       new ButtonBuilder().setLabel('emolarp.fans ^w^').setStyle(ButtonStyle.Link).setURL(SITE_URL)
     );
+    const embed = {
+      title: `Loomie's Deer OC Showcase~ ${pick('cute')}`,
+      description: `Meet **Loomie** (<@${OWNER_ID}>)'s deer OC! ${pick('online')}\n\n• **Species:** Cozy Deer Kemonomimi / Anthro\n• **Signature Fit:** Oversized pastel hoodie, striped thigh-highs, fluffy tail~\n• **Website:** [emolarp.fans](${SITE_URL}) :3`,
+      color: PASTEL_PINK
+    };
+    if (loomieUser?.displayAvatarURL) {
+      embed.thumbnail = { url: loomieUser.displayAvatarURL({ size: 256 }) };
+    }
+    if (OC_IMAGE_URL && OC_IMAGE_URL.startsWith('http')) {
+      embed.image = { url: OC_IMAGE_URL };
+    }
     return {
-      embeds: [{
-        title: `Loomie's Deer OC Showcase~ ${pick('cute')}`,
-        description: `Meet **Loomie** (<@${OWNER_ID}>)'s deer OC! ${pick('online')}\n\n• **Species:** Cozy Deer Kemonomimi / Anthro\n• **Signature Fit:** Oversized pastel hoodie, striped thigh-highs, fluffy tail~\n• **Website:** [emolarp.fans](${SITE_URL}) :3`,
-        color: PASTEL_PINK,
-        thumbnail: { url: loomieUser.displayAvatarURL({ size: 256 }) },
-        image: OC_IMAGE_URL ? { url: OC_IMAGE_URL } : undefined
-      }],
+      embeds: [embed],
       components: [row]
     };
   }
 
   if (TARGET_ACTIONS.includes(commandName)) {
     const cutie = params.cutie || interaction.user;
-    const gif = await fetchActionGif(commandName, params.vibe || 'furry');
+    const gif = await fetchActionGif(commandName);
     const count = recordAffection(interaction.user.id, cutie.id);
     const chosen = buildActionCopy(commandName, interaction.user.id, cutie.id);
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`back:${commandName}:${interaction.user.id}:${cutie.id}:${params.vibe || 'furry'}`).setLabel(chosen.backLabel).setStyle(ButtonStyle.Secondary)
     );
 
+    const embed = {
+      title: chosen.title,
+      description: `${chosen.text}\n\n*Combo with <@${cutie.id}>: **${count}** time${count === 1 ? '' : 's'}! ^w^* • [emolarp.fans](${SITE_URL})`,
+      color: PASTEL_PINK
+    };
+    if (cutie?.displayAvatarURL) {
+      embed.thumbnail = { url: cutie.displayAvatarURL({ size: 256 }) };
+    }
+    if (gif?.url) {
+      embed.image = { url: gif.url };
+      embed.footer = { text: `${gif.source || 'Furry Animation'} • paws certified :3` };
+    }
+
     return {
-      embeds: [{
-        title: chosen.title,
-        description: `${chosen.text}\n\n*Combo with <@${cutie.id}>: **${count}** time${count === 1 ? '' : 's'}! ^w^* • [emolarp.fans](${SITE_URL})`,
-        color: PASTEL_PINK,
-        thumbnail: { url: cutie.displayAvatarURL({ size: 256 }) },
-        image: gif?.url ? { url: gif.url } : undefined,
-        footer: { text: `${gif?.source || 'Furry Animation'} • paws certified :3` }
-      }],
+      embeds: [embed],
       components: [row]
     };
   }
 
   if (SOLO_ACTIONS.includes(commandName)) {
     const cutie = params.cutie || null;
-    const gif = await fetchActionGif(commandName, params.vibe || 'furry');
+    const gif = await fetchActionGif(commandName);
     let title = '';
     let description = '';
 
@@ -664,30 +647,36 @@ async function executeBotCommand(commandName, params, interaction) {
         : `*awooooooo~!!* <@${interaction.user.id}> lets out a sweet, fluffy little howl to the moon! 🐺✨ • [emolarp.fans](${SITE_URL})`;
     }
 
-    return {
-      embeds: [{
-        title,
-        description,
-        color: PASTEL_LAVENDER,
-        thumbnail: { url: (cutie || interaction.user).displayAvatarURL({ size: 256 }) },
-        image: gif?.url ? { url: gif.url } : undefined,
-        footer: { text: `${gif?.source || 'Furry Animation'} • paws certified :3` }
-      }]
+    const embed = {
+      title,
+      description,
+      color: PASTEL_LAVENDER
     };
+    const avatarTarget = cutie || interaction.user;
+    if (avatarTarget?.displayAvatarURL) {
+      embed.thumbnail = { url: avatarTarget.displayAvatarURL({ size: 256 }) };
+    }
+    if (gif?.url) {
+      embed.image = { url: gif.url };
+      embed.footer = { text: `${gif.source || 'Furry Animation'} • paws certified :3` };
+    }
+
+    return { embeds: [embed] };
   }
 
   if (commandName === 'cutemeter') {
     const cutie = params.cutie || interaction.user;
     const score = cutie.id === OWNER_ID ? 100 : Number(BigInt(cutie.id) % 31n) + 70;
     const meter = `[${'='.repeat(Math.round(score / 10))}${'-'.repeat(10 - Math.round(score / 10))}]`;
-    return {
-      embeds: [{
-        title: `Cute Meter~ ${pick('cute')}`,
-        description: `**Target:** <@${cutie.id}>\n**Score:** **${score}%** \`${meter}\`\n**Verdict:** Certified adorable! Deserves unlimited headpats ${pick('headpat')}\n\n[emolarp.fans](${SITE_URL}) :3`,
-        color: PASTEL_PINK,
-        thumbnail: { url: cutie.displayAvatarURL({ size: 256 }) }
-      }]
+    const embed = {
+      title: `Cute Meter~ ${pick('cute')}`,
+      description: `**Target:** <@${cutie.id}>\n**Score:** **${score}%** \`${meter}\`\n**Verdict:** Certified adorable! Deserves unlimited headpats ${pick('headpat')}\n\n[emolarp.fans](${SITE_URL}) :3`,
+      color: PASTEL_PINK
     };
+    if (cutie?.displayAvatarURL) {
+      embed.thumbnail = { url: cutie.displayAvatarURL({ size: 256 }) };
+    }
+    return { embeds: [embed] };
   }
 
   if (commandName === 'ship') {
@@ -722,14 +711,15 @@ async function executeBotCommand(commandName, params, interaction) {
   if (commandName === 'lovecount') {
     const cutie = params.cutie || interaction.user;
     const count = affectionCounts.get(`${interaction.user.id}->${cutie.id}`) || 0;
-    return {
-      embeds: [{
-        title: `Affection Counter~ ${pick('affection')}`,
-        description: `You have showered <@${cutie.id}> with love **${count}** time${count === 1 ? '' : 's'}!\n\n*Total delivered bot-wide: **${totalAffectionDelivered}** times!* ${pick('online')} • [emolarp.fans](${SITE_URL})`,
-        color: PASTEL_PINK,
-        thumbnail: { url: cutie.displayAvatarURL({ size: 256 }) }
-      }]
+    const embed = {
+      title: `Affection Counter~ ${pick('affection')}`,
+      description: `You have showered <@${cutie.id}> with love **${count}** time${count === 1 ? '' : 's'}!\n\n*Total delivered bot-wide: **${totalAffectionDelivered}** times!* ${pick('online')} • [emolarp.fans](${SITE_URL})`,
+      color: PASTEL_PINK
     };
+    if (cutie?.displayAvatarURL) {
+      embed.thumbnail = { url: cutie.displayAvatarURL({ size: 256 }) };
+    }
+    return { embeds: [embed] };
   }
 
   if (commandName === 'avatar') {
@@ -738,21 +728,23 @@ async function executeBotCommand(commandName, params, interaction) {
     if (!targetUser) return { content: `Awr~ User \`${rawTarget}\` not found! >_<` };
 
     const avatarUrl = targetUser.displayAvatarURL({ size: 1024, extension: 'png' });
-    const bannerUrl = targetUser.bannerURL({ size: 1024, extension: 'png' }) || null;
+    const bannerUrl = targetUser.bannerURL?.({ size: 1024, extension: 'png' }) || null;
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setLabel('View PFP :3').setStyle(ButtonStyle.Link).setURL(avatarUrl),
       new ButtonBuilder().setLabel('Profile 👤').setStyle(ButtonStyle.Link).setURL(`https://discord.com/users/${targetUser.id}`)
     );
     if (bannerUrl) row.addComponents(new ButtonBuilder().setLabel('Banner ^w^').setStyle(ButtonStyle.Link).setURL(bannerUrl));
 
+    const embed = {
+      title: `${targetUser.username}'s Avatar & Profile~ ${pick('cute')}`,
+      description: `• **Username:** \`${targetUser.tag}\`\n• **ID:** \`${targetUser.id}\`\n\n[emolarp.fans](${SITE_URL}) :3`,
+      color: PASTEL_PINK,
+      image: { url: avatarUrl }
+    };
+    if (bannerUrl) embed.thumbnail = { url: bannerUrl };
+
     return {
-      embeds: [{
-        title: `${targetUser.username}'s Avatar & Profile~ ${pick('cute')}`,
-        description: `• **Username:** \`${targetUser.tag}\`\n• **ID:** \`${targetUser.id}\`\n\n[emolarp.fans](${SITE_URL}) :3`,
-        color: PASTEL_PINK,
-        image: { url: avatarUrl },
-        thumbnail: bannerUrl ? { url: bannerUrl } : undefined
-      }],
+      embeds: [embed],
       components: [row]
     };
   }
@@ -815,17 +807,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       try {
         const dm = await interaction.user.createDM();
-        await dm.send({
-          embeds: [{
-            title: `Saved Artwork (#${post.id}) ~ ${pick('cute')}`,
-            description: `• **Artist:** \`${post.artists}\`\n• **Species/Tags:** \`${post.species}\`\n• **Score:** \`${post.score}\` • **Rating:** \`${String(post.rating).toUpperCase()}\`\n• **Post:** [View on e621.net](${post.postUrl})\n• **Direct:** [Full Image](${post.imageUrl})\n` +
-              (post.videoUrl ? `• **Video:** [Watch Video (${String(post.ext).toUpperCase()})](${post.videoUrl})\n` : '') +
-              `\n[emolarp.fans](${SITE_URL}) :3`,
-            color: PASTEL_PINK,
-            image: { url: post.imageUrl },
-            footer: { text: `Saved to your DMs • e621.net • Loomie's Bot :3` }
-          }]
-        });
+        const embed = {
+          title: `Saved Artwork (#${post.id}) ~ ${pick('cute')}`,
+          description: `• **Artist:** \`${post.artists}\`\n• **Species/Tags:** \`${post.species}\`\n• **Score:** \`${post.score}\` • **Rating:** \`${String(post.rating).toUpperCase()}\`\n• **Post:** [View on e621.net](${post.postUrl})\n• **Direct:** [Full Image](${post.imageUrl})\n` +
+            (post.videoUrl ? `• **Video:** [Watch Video (${String(post.ext).toUpperCase()})](${post.videoUrl})\n` : '') +
+            `\n[emolarp.fans](${SITE_URL}) :3`,
+          color: PASTEL_PINK,
+          footer: { text: `Saved to your DMs • e621.net • Loomie's Bot :3` }
+        };
+        if (post.imageUrl && post.imageUrl.startsWith('http')) {
+          embed.image = { url: post.imageUrl };
+        }
+        await dm.send({ embeds: [embed] });
         return interaction.reply({ content: `Saved post **#${post.id}** to your DMs! ₍ᐢ. .ᐢ₎`, ephemeral: true });
       } catch {
         return interaction.reply({ content: `Awr~ Couldn't send DMs! Please enable DMs for this server >_<`, ephemeral: true });
@@ -860,32 +853,54 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isButton() && interaction.customId.startsWith('back:')) {
-      const [, action, senderId, receiverId, vibe] = interaction.customId.split(':');
+      const [, action, senderId, receiverId] = interaction.customId.split(':');
       if (receiverId && interaction.user.id !== receiverId && interaction.user.id !== senderId) {
         return interaction.reply({ content: `That button is for <@${receiverId}> to reply, nya!`, ephemeral: true });
       }
       await interaction.deferReply();
-      const gif = await fetchActionGif(action, vibe || 'furry');
+      const gif = await fetchActionGif(action);
       const count = recordAffection(interaction.user.id, senderId);
       const chosen = buildActionCopy(action, interaction.user.id, senderId);
       const targetUser = await client.users.fetch(senderId).catch(() => null);
 
-      return interaction.editReply({
-        embeds: [{
-          title: `${chosen.title} (Returned!)`,
-          description: `${chosen.text}\n\n*Combo with <@${senderId}>: **${count}** time${count === 1 ? '' : 's'}! ^w^* • [emolarp.fans](${SITE_URL})`,
-          color: PASTEL_PURPLE,
-          thumbnail: targetUser ? { url: targetUser.displayAvatarURL({ size: 256 }) } : undefined,
-          image: gif?.url ? { url: gif.url } : undefined,
-          footer: { text: `${gif?.source || 'Furry Animation'} • paws certified :3` }
-        }]
-      });
+      const embed = {
+        title: `${chosen.title} (Returned!)`,
+        description: `${chosen.text}\n\n*Combo with <@${senderId}>: **${count}** time${count === 1 ? '' : 's'}! ^w^* • [emolarp.fans](${SITE_URL})`,
+        color: PASTEL_PURPLE
+      };
+      if (targetUser?.displayAvatarURL) {
+        embed.thumbnail = { url: targetUser.displayAvatarURL({ size: 256 }) };
+      }
+      if (gif?.url) {
+        embed.image = { url: gif.url };
+        embed.footer = { text: `${gif.source || 'Furry Animation'} • paws certified :3` };
+      }
+
+      return interaction.editReply({ embeds: [embed] });
     }
 
     if (!interaction.isChatInputCommand()) return;
 
-    const deferred = ['e621', 'yiff', 'furrypic', 'oc', ...TARGET_ACTIONS, ...SOLO_ACTIONS, 'avatar', 'update'];
-    if (deferred.includes(interaction.commandName)) await interaction.deferReply();
+    await interaction.deferReply();
+
+    if (interaction.commandName === 'log') {
+      const cmdRaw = (interaction.options.getString('command') || '').replace(/^\/+/, '').trim().split(/\s+/);
+      const subCmd = cmdRaw[0] || 'stats';
+      const inlineTags = cmdRaw.slice(1).join(' ') || interaction.options.getString('tags') || '';
+      const params = {
+        tags: inlineTags,
+        cutie: interaction.options.getUser('cutie') || null,
+        order: 'newest',
+        rating: subCmd === 'yiff' ? 'explicit' : 'nsfw',
+        vibe: 'furry',
+        species: 'neko',
+        user_id: null,
+        scope: 'both'
+      };
+      const payload = await executeBotCommand(subCmd, params, interaction);
+      const content = `\`[LOG]\` Executed \`/${subCmd}\` | Ping: \`${client.ws.ping}ms\``;
+      return interaction.editReply({ ...payload, content });
+    }
 
     const params = {
       cutie: interaction.options.getUser('cutie') || interaction.options.getUser('cutie1') || null,
@@ -901,11 +916,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     };
 
     const payload = await executeBotCommand(interaction.commandName, params, interaction);
-    if (deferred.includes(interaction.commandName)) {
-      await interaction.editReply(payload);
-    } else {
-      await interaction.reply(payload);
-    }
+    await interaction.editReply(payload);
   } catch (err) {
     console.error('Interaction error:', err);
     const msg = `Awr~ Error: \`${err?.message || String(err)}\` >_<`;
