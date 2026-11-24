@@ -404,7 +404,7 @@ async function fetchFurrySpecies(species = 'neko', logger = null) {
   return null;
 }
 
-// Fetch media from e621.net (extracts file/sample/preview URLs + MD5 fallback + Danbooru backup)
+// Fetch media from e621.net, with automatic Danbooru fallback when e621 post objects omit file URLs
 async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
   const cleanedUserTags = rawTags
     .split(/[\s,]+/)
@@ -427,7 +427,7 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
   const e621Key = (process.env.E621_API_KEY || 'q8iuHtnR1XvvWaYKyVB55hyk').trim();
 
   const baseHeaders = {
-    'User-Agent': `FurryDiscordBot/5.7 (by ${e621User} on e621)`,
+    'User-Agent': `FurryDiscordBot/5.8 (by ${e621User} on e621)`,
     'Accept': 'application/json'
   };
 
@@ -446,7 +446,6 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
     userAgent: baseHeaders['User-Agent']
   });
 
-  // Helper to extract any usable image/GIF URL from a post object
   function extractMediaFromPost(p) {
     const ext = (p?.file?.ext || p?.file_ext || '').toLowerCase();
     const md5 = p?.file?.md5 || p?.md5;
@@ -535,7 +534,6 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
         sampleFirstPost: postsList[0]
           ? {
               id: postsList[0].id,
-              file: postsList[0].file,
               sample: postsList[0].sample ? { hasUrl: Boolean(postsList[0].sample.url) } : null,
               preview: postsList[0].preview ? { hasUrl: Boolean(postsList[0].preview.url) } : null
             }
@@ -548,7 +546,7 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
       }
 
       if (validPosts.length === 0) {
-        logger?.explainIssue(`${label} found ${rawCount} posts, but none had a displayable image/GIF URL (sample keys logged in trace).`);
+        logger?.explainIssue(`e621.net returned ${rawCount} post IDs, but omitted image/GIF URLs on those post records (likely new-account media restriction).`);
         continue;
       }
 
@@ -578,7 +576,60 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
     }
   }
 
-  logger?.log('E621:FAIL', `All query attempts returned 0 valid posts`);
+  // Fallback Booru: Danbooru (includes full image file_url when e621 post records omit file URLs)
+  try {
+    await sleep(600);
+    const dbTags = cleanedUserTags.slice(0, 2);
+    if (order === 'score') dbTags.push('order:score');
+    const dbQuery = encodeURIComponent(dbTags.join(' '));
+    const dbUrl = `${makeUrl('danbooru.donmai.us', '/posts.json')}?limit=50&tags=${dbQuery}`;
+    const t0 = performance.now();
+    logger?.log('HTTP:REQ', `Fallback [Danbooru] GET ${dbUrl}`, { dbTags });
+
+    const dbRes = await fetch(dbUrl, {
+      headers: { 'User-Agent': 'FurryDiscordBot/5.8', 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(8000)
+    });
+    const latencyMs = (performance.now() - t0).toFixed(2);
+    logger?.log('HTTP:RES', `Fallback [Danbooru] HTTP ${dbRes.status} in ${latencyMs}ms`);
+
+    if (dbRes.ok) {
+      const dbPosts = await dbRes.json();
+      const validDb = (Array.isArray(dbPosts) ? dbPosts : [])
+        .map((p) => {
+          const url = p?.file_url || p?.large_file_url || null;
+          const ext = (p?.file_ext || (url ? url.split('?')[0].split('.').pop() : '') || '').toLowerCase();
+          return { post: p, url, ext };
+        })
+        .filter((item) => item.url && allowedExts.includes(item.ext));
+
+      logger?.log('DANBOORU:FILTER', `Filtered Danbooru posts`, {
+        rawCount: Array.isArray(dbPosts) ? dbPosts.length : 0,
+        validCount: validDb.length
+      });
+
+      if (validDb.length > 0) {
+        const picked = validDb[Math.floor(Math.random() * validDb.length)];
+        const p = picked.post;
+        logger?.clearIssues();
+        logger?.explainSuccess(`e621 omitted image URLs on its posts, so the bot automatically pulled post #${p.id} (\`.${picked.ext}\`) from Danbooru in ${latencyMs}ms!`);
+        return {
+          id: p.id,
+          sourceName: 'Danbooru',
+          imageUrl: picked.url,
+          postUrl: makeUrl('danbooru.donmai.us', `/posts/${p.id}`),
+          score: p.score ?? 0,
+          artists: p.tag_string_artist || 'Unknown',
+          species: p.tag_string_character || p.tag_string_general?.split(' ').slice(0, 3).join(', ') || 'Unspecified',
+          searchedTags: dbTags.length ? dbTags.join(' ') : 'all posts'
+        };
+      }
+    }
+  } catch (err) {
+    logger?.log('HTTP:ERR', `Fallback [Danbooru] failed`, { error: err?.message || String(err) });
+  }
+
+  logger?.log('E621:FAIL', `All Booru attempts returned 0 valid posts`);
   return null;
 }
 
@@ -718,7 +769,7 @@ client.once(Events.ClientReady, async () => {
     makeEverywhere(
       new SlashCommandBuilder()
         .setName('e621')
-        .setDescription('Pull furry images & GIFs from e621.net using booru tags! :3')
+        .setDescription('Pull furry images & GIFs using booru tags! :3')
         .addStringOption((opt) =>
           opt
             .setName('tags')
@@ -1058,7 +1109,7 @@ function buildE621Response(post, rawTags = '', order = 'newest', logger = null) 
       title: `e621 Booru Pull~ ${pick('cute', logger)}`,
       description:
         `*ears perk up and tail wags!* Found a fresh post for \`${post.searchedTags}\`! ${pick('online', logger)}\n\n` +
-        `• **Artist:** \`${post.artists}\` • **Species:** \`${post.species}\` • **Score:** \`${post.score}\`\n` +
+        `• **Artist:** \`${post.artists}\` • **Tags/Species:** \`${post.species}\` • **Score:** \`${post.score}\`\n` +
         `• [emolarp.fans](${SITE_URL}) :3`,
       color: PASTEL_PINK,
       image: { url: post.imageUrl },
@@ -1262,7 +1313,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     if (!post) {
       logger?.log('CMD:E621_EMPTY', `No valid post returned from Booru for tags="${rawTags}"`);
       return {
-        content: `Awr~ I couldn't find any image/GIF posts on e621 for \`${rawTags || 'your search'}\`! Try simpler underscore tags like \`deer\`, \`kemonomimi\`, or \`cat_boy\`, >_<`
+        content: `Awr~ I couldn't find any image/GIF posts for \`${rawTags || 'your search'}\`! Try simpler underscore tags like \`deer\`, \`kemonomimi\`, or \`cat_boy\`, >_<`
       };
     }
 
