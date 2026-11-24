@@ -46,9 +46,70 @@ const KAOMOJI = {
   blush: ['(｡・//ε//・｡)', '(⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄)', '(*/ω\\)', '(´,,•ω•,,)', '(´｡• ᵕ •｡`)']
 };
 
-function pick(category) {
+class VerboseLogger {
+  constructor(enabled = false) {
+    this.enabled = enabled;
+    this.startTime = performance.now();
+    this.startIso = new Date().toISOString();
+    this.entries = [];
+  }
+
+  log(stage, message, data = undefined) {
+    if (!this.enabled) return;
+    const elapsed = (performance.now() - this.startTime).toFixed(2);
+    const iso = new Date().toISOString();
+    let line = `[${iso}] [+${elapsed}ms] [${stage}] ${message}`;
+    if (data !== undefined) {
+      let serialized;
+      try {
+        serialized = typeof data === 'string' ? data : JSON.stringify(data);
+      } catch {
+        serialized = String(data);
+      }
+      line += ` | ${serialized}`;
+    }
+    this.entries.push(line);
+    console.log(line);
+  }
+
+  format(maxLength = 1750) {
+    const full = this.entries.join('\n');
+    if (full.length <= maxLength) return full;
+    const headLen = Math.floor(maxLength * 0.45);
+    const tailLen = Math.floor(maxLength * 0.45);
+    const omitted = full.length - (headLen + tailLen);
+    return `${full.slice(0, headLen)}\n... [${omitted} chars omitted to fit Discord payload limit] ...\n${full.slice(full.length - tailLen)}`;
+  }
+}
+
+function recordAffectionVerbose(fromId, toId, logger = null) {
+  const prevTotal = totalAffectionDelivered;
+  const key = `${fromId}->${toId}`;
+  const prevPair = affectionCounts.get(key) || 0;
+  const next = recordAffection(fromId, toId);
+  logger?.log('STATE:AFFECTION', `Updated in-memory affection counters for key "${key}"`, {
+    key,
+    previousPairCount: prevPair,
+    newPairCount: next,
+    previousGlobalTotal: prevTotal,
+    newGlobalTotal: totalAffectionDelivered,
+    totalTrackedPairs: affectionCounts.size
+  });
+  return next;
+}
+
+function pick(category, logger = null) {
   const list = KAOMOJI[category] || KAOMOJI.cute;
-  return list[Math.floor(Math.random() * list.length)];
+  const idx = Math.floor(Math.random() * list.length);
+  const chosen = list[idx];
+  logger?.log('RNG:KAOMOJI', `Picked kaomoji from category "${category}"`, {
+    requestedCategory: category,
+    fallbackUsed: !KAOMOJI[category],
+    poolSize: list.length,
+    selectedIndex: idx,
+    chosen
+  });
+  return chosen;
 }
 
 const PASTEL_PINK = 0xff99cc;
@@ -56,7 +117,7 @@ const PASTEL_PURPLE = 0xc792ea;
 const PASTEL_LAVENDER = 0xe0b0ff;
 
 // Reliable GIF fetcher with 3-tier fallback (PurrBot Furry -> Nekos.best -> Waifu.pics SFW)
-async function fetchActionGif(action, vibe = 'furry') {
+async function fetchActionGif(action, vibe = 'furry', logger = null) {
   // Verified PurrBot SFW GIF endpoints
   const purrMap = {
     snuggle: 'cuddle',
@@ -111,32 +172,67 @@ async function fetchActionGif(action, vibe = 'furry') {
     howl: 'awoo'
   };
 
+  logger?.log('GIF:INIT', `Starting 3-tier GIF resolution for action="${action}" vibe="${vibe}"`, {
+    tier1_purrbot: vibe === 'furry' ? purrMap[action] || null : 'skipped (vibe != furry)',
+    tier2_nekosbest: nekosMap[action] || 'cuddle',
+    tier3_waifupics: waifuMap[action] || 'hug'
+  });
+
   // 1. Try PurrBot Furry / Kemonomimi first when vibe === 'furry'
   if (vibe === 'furry' && purrMap[action]) {
+    const purrUrl = `https://api.purrbot.site/v2/img/sfw/${purrMap[action]}/gif`;
+    const t0 = performance.now();
+    logger?.log('HTTP:REQ', `Tier 1 [PurrBot] GET ${purrUrl}`, { timeoutMs: 5000 });
     try {
-      const purrRes = await fetch(`https://api.purrbot.site/v2/img/sfw/${purrMap[action]}/gif`, {
+      const purrRes = await fetch(purrUrl, {
         signal: AbortSignal.timeout(5000)
+      });
+      const latencyMs = (performance.now() - t0).toFixed(2);
+      logger?.log('HTTP:RES', `Tier 1 [PurrBot] responded HTTP ${purrRes.status} in ${latencyMs}ms`, {
+        ok: purrRes.ok,
+        status: purrRes.status,
+        statusText: purrRes.statusText
       });
       if (purrRes.ok) {
         const purrData = await purrRes.json();
+        logger?.log('GIF:PARSE', `Tier 1 [PurrBot] payload parsed`, {
+          hasLink: Boolean(purrData?.link),
+          error: purrData?.error ?? false,
+          link: purrData?.link || null
+        });
         if (purrData?.link && !purrData.error) {
           return { url: purrData.link, source: 'PurrBot Furry / Kemonomimi' };
         }
       }
-    } catch {
-      // Fall through to backup source
+    } catch (err) {
+      logger?.log('HTTP:ERR', `Tier 1 [PurrBot] failed, falling back to Tier 2`, {
+        error: err?.message || String(err)
+      });
     }
   }
 
   // 2. Try Nekos.best SFW
   try {
     const endpoint = nekosMap[action] || 'cuddle';
-    const res = await fetch(`https://nekos.best/api/v2/${endpoint}`, {
+    const nekosUrl = `https://nekos.best/api/v2/${endpoint}`;
+    const t0 = performance.now();
+    logger?.log('HTTP:REQ', `Tier 2 [Nekos.best] GET ${nekosUrl}`, { timeoutMs: 5000 });
+    const res = await fetch(nekosUrl, {
       signal: AbortSignal.timeout(5000)
+    });
+    const latencyMs = (performance.now() - t0).toFixed(2);
+    logger?.log('HTTP:RES', `Tier 2 [Nekos.best] responded HTTP ${res.status} in ${latencyMs}ms`, {
+      ok: res.ok,
+      status: res.status
     });
     if (res.ok) {
       const data = await res.json();
       const item = data?.results?.[0];
+      logger?.log('GIF:PARSE', `Tier 2 [Nekos.best] payload parsed`, {
+        resultsCount: data?.results?.length || 0,
+        url: item?.url || null,
+        animeName: item?.anime_name || null
+      });
       if (item?.url) {
         return {
           url: item.url,
@@ -144,69 +240,102 @@ async function fetchActionGif(action, vibe = 'furry') {
         };
       }
     }
-  } catch {
-    // Fall through to final backup
+  } catch (err) {
+    logger?.log('HTTP:ERR', `Tier 2 [Nekos.best] failed, falling back to Tier 3`, {
+      error: err?.message || String(err)
+    });
   }
 
   // 3. Final backup: Waifu.pics SFW
   try {
     const wEndpoint = waifuMap[action] || 'hug';
-    const wRes = await fetch(`https://api.waifu.pics/sfw/${wEndpoint}`, {
+    const waifuUrl = `https://api.waifu.pics/sfw/${wEndpoint}`;
+    const t0 = performance.now();
+    logger?.log('HTTP:REQ', `Tier 3 [Waifu.pics] GET ${waifuUrl}`, { timeoutMs: 5000 });
+    const wRes = await fetch(waifuUrl, {
       signal: AbortSignal.timeout(5000)
+    });
+    const latencyMs = (performance.now() - t0).toFixed(2);
+    logger?.log('HTTP:RES', `Tier 3 [Waifu.pics] responded HTTP ${wRes.status} in ${latencyMs}ms`, {
+      ok: wRes.ok,
+      status: wRes.status
     });
     if (wRes.ok) {
       const wData = await wRes.json();
+      logger?.log('GIF:PARSE', `Tier 3 [Waifu.pics] payload parsed`, { url: wData?.url || null });
       if (wData?.url) {
         return { url: wData.url, source: 'Waifu.pics SFW' };
       }
     }
-  } catch {
-    // All sources unreachable
+  } catch (err) {
+    logger?.log('HTTP:ERR', `Tier 3 [Waifu.pics] failed; all GIF sources exhausted`, {
+      error: err?.message || String(err)
+    });
   }
 
+  logger?.log('GIF:FAIL', `All 3 GIF tiers returned no valid media URL`);
   return null;
 }
 
 // Fetch random SFW species image/GIF from PurrBot with Nekos.best fallback
-async function fetchFurrySpecies(species = 'neko') {
+async function fetchFurrySpecies(species = 'neko', logger = null) {
+  logger?.log('SPECIES:INIT', `Fetching SFW furry species media for species="${species}"`);
   try {
-    const res = await fetch(`https://api.purrbot.site/v2/img/sfw/${species}/gif`, {
+    const gifUrl = `https://api.purrbot.site/v2/img/sfw/${species}/gif`;
+    const t0 = performance.now();
+    logger?.log('HTTP:REQ', `Tier 1a [PurrBot GIF] GET ${gifUrl}`, { timeoutMs: 5000 });
+    const res = await fetch(gifUrl, {
       signal: AbortSignal.timeout(5000)
     });
+    logger?.log('HTTP:RES', `Tier 1a [PurrBot GIF] HTTP ${res.status} in ${(performance.now() - t0).toFixed(2)}ms`);
     if (res.ok) {
       const data = await res.json();
+      logger?.log('SPECIES:PARSE', `Tier 1a [PurrBot GIF] payload`, { link: data?.link || null, error: data?.error ?? false });
       if (data?.link && !data.error) return data.link;
     }
-    const imgRes = await fetch(`https://api.purrbot.site/v2/img/sfw/${species}/img`, {
+
+    const imgUrl = `https://api.purrbot.site/v2/img/sfw/${species}/img`;
+    const t1 = performance.now();
+    logger?.log('HTTP:REQ', `Tier 1b [PurrBot IMG] GET ${imgUrl}`, { timeoutMs: 5000 });
+    const imgRes = await fetch(imgUrl, {
       signal: AbortSignal.timeout(5000)
     });
+    logger?.log('HTTP:RES', `Tier 1b [PurrBot IMG] HTTP ${imgRes.status} in ${(performance.now() - t1).toFixed(2)}ms`);
     if (imgRes.ok) {
       const imgData = await imgRes.json();
+      logger?.log('SPECIES:PARSE', `Tier 1b [PurrBot IMG] payload`, { link: imgData?.link || null, error: imgData?.error ?? false });
       if (imgData?.link && !imgData.error) return imgData.link;
     }
-  } catch {
-    // Fall through
+  } catch (err) {
+    logger?.log('HTTP:ERR', `Tier 1 [PurrBot] error, falling back to Nekos.best`, { error: err?.message || String(err) });
   }
 
   // Fallback to Nekos.best
   try {
     const fallbackEndpoint = ['kitsune', 'okami', 'holo'].includes(species) ? 'kitsune' : 'neko';
-    const nbRes = await fetch(`https://nekos.best/api/v2/${fallbackEndpoint}`, {
+    const nbUrl = `https://nekos.best/api/v2/${fallbackEndpoint}`;
+    const t0 = performance.now();
+    logger?.log('HTTP:REQ', `Tier 2 [Nekos.best] GET ${nbUrl}`, { fallbackEndpoint, timeoutMs: 5000 });
+    const nbRes = await fetch(nbUrl, {
       signal: AbortSignal.timeout(5000)
     });
+    logger?.log('HTTP:RES', `Tier 2 [Nekos.best] HTTP ${nbRes.status} in ${(performance.now() - t0).toFixed(2)}ms`);
     if (nbRes.ok) {
       const nbData = await nbRes.json();
-      if (nbData?.results?.[0]?.url) return nbData.results[0].url;
+      const url = nbData?.results?.[0]?.url || null;
+      logger?.log('SPECIES:PARSE', `Tier 2 [Nekos.best] payload`, { url });
+      if (url) return url;
     }
-  } catch {
-    // Ignore
+  } catch (err) {
+    logger?.log('HTTP:ERR', `Tier 2 [Nekos.best] failed`, { error: err?.message || String(err) });
   }
 
+  logger?.log('SPECIES:FAIL', `No media found across all endpoints for species="${species}"`);
   return null;
 }
 
 // Fetch SFW & NSFW media from e621.net Booru API with specified tags
-async function fetchE621Post(rawTags = '', order = 'random') {
+async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
   const tagAliases = {
     sfw: 'rating:s',
     safe: 'rating:s',
@@ -233,10 +362,26 @@ async function fetchE621Post(rawTags = '', order = 'random') {
     attempts.push([...cleanedUserTags]);
   }
 
+  logger?.log('E621:INIT', `Prepared e621 Booru search query`, {
+    rawTags,
+    order,
+    cleanedUserTags,
+    allowedExts,
+    attemptCount: attempts.length,
+    attempts
+  });
+
   for (let i = 0; i < attempts.length; i++) {
     const tagsList = attempts[i];
     const query = encodeURIComponent(tagsList.join(' '));
     const url = `https://e621.net/posts.json?limit=60&tags=${query}`;
+    const t0 = performance.now();
+
+    logger?.log('HTTP:REQ', `e621 attempt #${i + 1}/${attempts.length} GET ${url}`, {
+      tagsList,
+      timeoutMs: 8000,
+      userAgent: 'furry-discord-bot/4.6 (by Loomie on GitHub)'
+    });
 
     try {
       const res = await fetch(url, {
@@ -246,14 +391,22 @@ async function fetchE621Post(rawTags = '', order = 'random') {
         },
         signal: AbortSignal.timeout(8000)
       });
+      const latencyMs = (performance.now() - t0).toFixed(2);
+      logger?.log('HTTP:RES', `e621 attempt #${i + 1} HTTP ${res.status} in ${latencyMs}ms`, {
+        ok: res.ok,
+        status: res.status,
+        statusText: res.statusText
+      });
 
       if (res.status === 429 || res.status >= 500) {
+        logger?.log('E621:RETRY', `Received HTTP ${res.status}; backing off 800ms before next attempt`);
         await new Promise((r) => setTimeout(r, 800));
         continue;
       }
 
       if (!res.ok) continue;
       const data = await res.json();
+      const rawCount = data?.posts?.length || 0;
 
       const validPosts = (data?.posts || [])
         .map((p) => {
@@ -270,18 +423,22 @@ async function fetchE621Post(rawTags = '', order = 'random') {
         })
         .filter((item) => item.displayUrl && allowedExts.includes(item.ext));
 
+      logger?.log('E621:FILTER', `Filtered e621 posts for valid image/GIF extensions`, {
+        rawPostCount: rawCount,
+        validPostCount: validPosts.length
+      });
+
       if (validPosts.length === 0) continue;
 
-      const picked =
-        order === 'newest'
-          ? validPosts[0]
-          : validPosts[Math.floor(Math.random() * Math.min(validPosts.length, order === 'score' ? 15 : validPosts.length))];
+      const poolLimit = Math.min(validPosts.length, order === 'score' ? 15 : validPosts.length);
+      const selectedIdx = order === 'newest' ? 0 : Math.floor(Math.random() * poolLimit);
+      const picked = validPosts[selectedIdx];
 
       const chosen = picked.post;
       const artists = (chosen.tags?.artist || []).filter((a) => a !== 'conditional_dnp').slice(0, 3);
       const species = (chosen.tags?.species || []).slice(0, 4);
 
-      return {
+      const result = {
         id: chosen.id,
         imageUrl: picked.displayUrl,
         postUrl: `https://e621.net/posts/${chosen.id}`,
@@ -290,71 +447,94 @@ async function fetchE621Post(rawTags = '', order = 'random') {
         species: species.length ? species.join(', ') : 'Unspecified',
         searchedTags: cleanedUserTags.length ? cleanedUserTags.join(' ') : 'all posts'
       };
-    } catch {
-      // Try next fallback attempt
+
+      logger?.log('E621:SELECT', `Selected e621 post #${result.id}`, {
+        selectedIdx,
+        poolLimit,
+        id: result.id,
+        ext: picked.ext,
+        fileSize: chosen.file?.size || null,
+        rating: chosen.rating || null,
+        score: result.score,
+        artists: result.artists,
+        species: result.species,
+        imageUrl: result.imageUrl
+      });
+
+      return result;
+    } catch (err) {
+      logger?.log('HTTP:ERR', `e621 attempt #${i + 1} threw exception`, { error: err?.message || String(err) });
     }
   }
 
+  logger?.log('E621:FAIL', `All e621 query attempts returned 0 valid posts`);
   return null;
 }
 
-function buildActionCopy(action, fromId, toId) {
+function buildActionCopy(action, fromId, toId, logger = null) {
   const copyMap = {
     snuggle: {
-      title: `Cozy Snuggle Pile~!! ${pick('snuggle')}`,
-      text: `*adjusts oversized pastel hoodie & striped thigh-highs, curling up close*\n\n<@${fromId}> wraps <@${toId}> in the warmest, fluffiest snuggles and gentle tail-wraps!! ${pick('snuggle')}`,
+      title: `Cozy Snuggle Pile~!! ${pick('snuggle', logger)}`,
+      text: `*adjusts oversized pastel hoodie & striped thigh-highs, curling up close*\n\n<@${fromId}> wraps <@${toId}> in the warmest, fluffiest snuggles and gentle tail-wraps!! ${pick('snuggle', logger)}`,
       backLabel: 'Snuggle Back :3'
     },
     hug: {
-      title: `Warm Fluffy Hug~!! ${pick('snuggle')}`,
-      text: `*opens arms wide and rushes in for a big squeeze*\n\n<@${fromId}> pulls <@${toId}> into the tightest, coziest hug ever!! ${pick('snuggle')}`,
+      title: `Warm Fluffy Hug~!! ${pick('snuggle', logger)}`,
+      text: `*opens arms wide and rushes in for a big squeeze*\n\n<@${fromId}> pulls <@${toId}> into the tightest, coziest hug ever!! ${pick('snuggle', logger)}`,
       backLabel: 'Hug Back ^w^'
     },
     lick: {
-      title: `Playful Paw & Cheek Lick~ ${pick('affection')}`,
-      text: `*ears perk up and tail wags wildly*\n\n<@${fromId}> leans in and gives <@${toId}> a super cute, playful puppy-boy lick right on the cheek!! ${pick('affection')}`,
+      title: `Playful Paw & Cheek Lick~ ${pick('affection', logger)}`,
+      text: `*ears perk up and tail wags wildly*\n\n<@${fromId}> leans in and gives <@${toId}> a super cute, playful puppy-boy lick right on the cheek!! ${pick('affection', logger)}`,
       backLabel: 'Lick Back >w<'
     },
     kiss: {
-      title: `Sweet Pastel Kiss~ ${pick('affection')}`,
-      text: `*blushes softly and paws at the air*\n\n<@${fromId}> gives <@${toId}> the sweetest, softest forehead & cheek kiss!! ${pick('affection')}`,
+      title: `Sweet Pastel Kiss~ ${pick('affection', logger)}`,
+      text: `*blushes softly and paws at the air*\n\n<@${fromId}> gives <@${toId}> the sweetest, softest forehead & cheek kiss!! ${pick('affection', logger)}`,
       backLabel: 'Kiss Back uwu'
     },
     headpat: {
-      title: `Cozy Headpat Delivery~!! ${pick('headpat')}`,
-      text: `*adjusts striped thigh-highs and reaches up on tiptoes*\n\n<@${fromId}> gives <@${toId}> the softest, warmest headpats and gentle paw-boops!! ${pick('headpat')}`,
+      title: `Cozy Headpat Delivery~!! ${pick('headpat', logger)}`,
+      text: `*adjusts striped thigh-highs and reaches up on tiptoes*\n\n<@${fromId}> gives <@${toId}> the softest, warmest headpats and gentle paw-boops!! ${pick('headpat', logger)}`,
       backLabel: 'Headpat Back :3'
     },
     earscratch: {
-      title: `Fluffy Ear Scratches~!! ${pick('headpat')}`,
-      text: `*gently scritches right behind the ears until the tail thumps happily*\n\n<@${fromId}> gives <@${toId}> the coziest ear scratches ever!! ${pick('headpat')}`,
+      title: `Fluffy Ear Scratches~!! ${pick('headpat', logger)}`,
+      text: `*gently scritches right behind the ears until the tail thumps happily*\n\n<@${fromId}> gives <@${toId}> the coziest ear scratches ever!! ${pick('headpat', logger)}`,
       backLabel: 'Scratch Back ^w^'
     },
     boop: {
-      title: `Soft Paw Snoot-Boop~!! ${pick('playful')}`,
-      text: `*reaches out a soft paw pad and gently pokes*\n\n*boop!!* <@${fromId}> boops <@${toId}> right on the nose!! ${pick('playful')}`,
+      title: `Soft Paw Snoot-Boop~!! ${pick('playful', logger)}`,
+      text: `*reaches out a soft paw pad and gently pokes*\n\n*boop!!* <@${fromId}> boops <@${toId}> right on the nose!! ${pick('playful', logger)}`,
       backLabel: 'Boop Back >w<'
     },
     bite: {
-      title: `Playful Love-Nibble~ nom! ${pick('playful')}`,
-      text: `*ears flatten playfully and leans in close*\n\n*nom~!* <@${fromId}> gives <@${toId}> a gentle, playful little catboy nibble!! ${pick('playful')}`,
+      title: `Playful Love-Nibble~ nom! ${pick('playful', logger)}`,
+      text: `*ears flatten playfully and leans in close*\n\n*nom~!* <@${fromId}> gives <@${toId}> a gentle, playful little catboy nibble!! ${pick('playful', logger)}`,
       backLabel: 'Nibble Back :3'
     },
     milk: {
-      title: `Fresh Cozy Milk Delivery~ uwu ${pick('cute')}`,
-      text: `*paws at the air and slides a frosty glass across the table*\n\n<@${fromId}> shares a sweet glass of milk with <@${toId}> for +100% cozy pastel energy!! ${pick('cute')}`,
+      title: `Fresh Cozy Milk Delivery~ uwu ${pick('cute', logger)}`,
+      text: `*paws at the air and slides a frosty glass across the table*\n\n<@${fromId}> shares a sweet glass of milk with <@${toId}> for +100% cozy pastel energy!! ${pick('cute', logger)}`,
       backLabel: 'Share Back :3'
     },
     bonk: {
       title: `Playful Paw Bonk~!! >_<`,
-      text: `*bonk!!* <@${fromId}> gives <@${toId}> a soft, playful paw-bonk on the head!! ${pick('playful')}`,
+      text: `*bonk!!* <@${fromId}> gives <@${toId}> a soft, playful paw-bonk on the head!! ${pick('playful', logger)}`,
       backLabel: 'Bonk Back >w<'
     }
   };
-  return copyMap[action];
+  const chosen = copyMap[action];
+  logger?.log('COPY:BUILD', `Constructed action copy template for "${action}"`, {
+    fromId,
+    toId,
+    title: chosen?.title,
+    backLabel: chosen?.backLabel
+  });
+  return chosen;
 }
 
-function buildAssetButtons(avatarUrl, bannerUrl, decoUrl, profileUserId = null) {
+function buildAssetButtons(avatarUrl, bannerUrl, decoUrl, profileUserId = null, logger = null) {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setLabel('View PFP :3')
@@ -385,6 +565,12 @@ function buildAssetButtons(avatarUrl, bannerUrl, decoUrl, profileUserId = null) 
         .setURL(`https://discord.com/users/${profileUserId}`)
     );
   }
+  logger?.log('COMPONENT:ASSET_BTNS', `Built asset link buttons`, {
+    buttonCount: row.components.length,
+    hasBanner: Boolean(bannerUrl),
+    hasDecoration: Boolean(decoUrl),
+    profileUserId
+  });
   return [row];
 }
 
@@ -634,6 +820,78 @@ client.once(Events.ClientReady, async () => {
       new SlashCommandBuilder()
         .setName('stats')
         .setDescription('Check furry uptime, ping & total affection delivered! :3')
+    ),
+    makeEverywhere(
+      new SlashCommandBuilder()
+        .setName('log')
+        .setDescription('Run any bot command with arguments and print extremely verbose logs into the output! :3')
+        .addStringOption((opt) =>
+          opt
+            .setName('command')
+            .setDescription('Command and arguments to run (e.g. "e621 deer", "hug @cutie", "ship @u1 @u2", "stats") :3')
+            .setRequired(true)
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName('args')
+            .setDescription('Optional arguments for the command (tags, question, @user, species, vibe, etc.) :3')
+            .setRequired(false)
+        )
+        .addUserOption((opt) =>
+          opt
+            .setName('cutie')
+            .setDescription('Target cutie for affection, reaction, cutemeter, lovecount, or ship! :3')
+            .setRequired(false)
+        )
+        .addUserOption((opt) =>
+          opt
+            .setName('cutie2')
+            .setDescription('Second cutie for /ship compatibility! ^w^')
+            .setRequired(false)
+        )
+        .addStringOption(addVibeOption)
+        .addStringOption((opt) =>
+          opt
+            .setName('tags')
+            .setDescription('Space-separated booru tags for /e621 (e.g. "deer kemonomimi") :3')
+            .setRequired(false)
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName('order')
+            .setDescription('How to sort /e621 results! ^w^')
+            .setRequired(false)
+            .addChoices(
+              { name: 'Random :3', value: 'random' },
+              { name: 'Top Score ^w^', value: 'score' },
+              { name: 'Newest uwu', value: 'newest' }
+            )
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName('species')
+            .setDescription('Pick a fluffy species for /furrypic! ^w^')
+            .setRequired(false)
+            .addChoices(
+              { name: 'Neko / Catboy :3', value: 'neko' },
+              { name: 'Kitsune / Fox ^w^', value: 'kitsune' },
+              { name: 'Okami / Wolf uwu', value: 'okami' },
+              { name: 'Eevee >w<', value: 'eevee' },
+              { name: 'Holo (Wolf) :3', value: 'holo' }
+            )
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName('question')
+            .setDescription('What yes/no question do you want to ask /8ball? :3')
+            .setRequired(false)
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName('user_id')
+            .setDescription('Discord User ID or @mention for /avatar! :3')
+            .setRequired(false)
+        )
     )
   ];
 
@@ -641,8 +899,25 @@ client.once(Events.ClientReady, async () => {
   await rest.put(Routes.applicationCommands(client.user.id), { body: commands }).catch(console.error);
 });
 
+const TARGET_ACTIONS = ['snuggle', 'hug', 'lick', 'kiss', 'headpat', 'earscratch', 'boop', 'bite', 'milk', 'bonk'];
+const SOLO_ACTIONS = ['blush', 'tailwag', 'purr', 'howl'];
+const ALL_COMMANDS = [
+  'e621',
+  'oc',
+  'furrypic',
+  ...TARGET_ACTIONS,
+  ...SOLO_ACTIONS,
+  'cutemeter',
+  'ship',
+  '8ball',
+  'lovecount',
+  'avatar',
+  'stats',
+  'log'
+];
+
 // Helper to build an e621 embed + Roll Again / View Post buttons
-function buildE621Response(post, rawTags = '', order = 'random') {
+function buildE621Response(post, rawTags = '', order = 'random', logger = null) {
   const safeCustomId = `e621:${order}:${rawTags.slice(0, 75)}`;
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -655,11 +930,18 @@ function buildE621Response(post, rawTags = '', order = 'random') {
       .setURL(post.postUrl)
   );
 
+  logger?.log('EMBED:E621', `Constructed e621 embed & action row`, {
+    postId: post.id,
+    safeCustomId,
+    postUrl: post.postUrl,
+    imageUrl: post.imageUrl
+  });
+
   return {
     embeds: [{
-      title: `e621 Booru Pull~ ${pick('cute')}`,
+      title: `e621 Booru Pull~ ${pick('cute', logger)}`,
       description:
-        `*ears perk up and tail wags!* Found a fresh post for \`${post.searchedTags}\`! ${pick('online')}\n\n` +
+        `*ears perk up and tail wags!* Found a fresh post for \`${post.searchedTags}\`! ${pick('online', logger)}\n\n` +
         `• **Artist:** \`${post.artists}\` • **Species:** \`${post.species}\` • **Score:** \`${post.score}\`\n` +
         `• [emolarp.fans](${SITE_URL}) :3`,
       color: PASTEL_PINK,
@@ -667,6 +949,606 @@ function buildE621Response(post, rawTags = '', order = 'random') {
       footer: { text: `e621.net • Post #${post.id} • paws & thigh-highs certified :3` }
     }],
     components: [row]
+  };
+}
+
+// Parse /log invocation into a target command name and normalized parameter object
+async function parseLogCommandInput(interaction, logger) {
+  const rawCommandOption = (interaction.options.getString('command', true) || '').trim();
+  const rawArgsOption = (interaction.options.getString('args') || '').trim();
+
+  const explicitOptions = {
+    cutie: interaction.options.getUser('cutie') || null,
+    cutie2: interaction.options.getUser('cutie2') || null,
+    vibe: interaction.options.getString('vibe') || null,
+    tags: interaction.options.getString('tags') || null,
+    order: interaction.options.getString('order') || null,
+    species: interaction.options.getString('species') || null,
+    question: interaction.options.getString('question') || null,
+    user_id: interaction.options.getString('user_id') || null
+  };
+
+  logger.log('PARSER:RAW', `Inspecting raw /log inputs`, {
+    rawCommandOption,
+    rawArgsOption,
+    explicitOptions: {
+      ...explicitOptions,
+      cutie: explicitOptions.cutie ? `${explicitOptions.cutie.username} (${explicitOptions.cutie.id})` : null,
+      cutie2: explicitOptions.cutie2 ? `${explicitOptions.cutie2.username} (${explicitOptions.cutie2.id})` : null
+    }
+  });
+
+  const combinedTokens = `${rawCommandOption} ${rawArgsOption}`.trim().split(/\s+/).filter(Boolean);
+  let targetCommand = (combinedTokens.shift() || '').replace(/^\/+/, '').toLowerCase();
+
+  // Unwrap accidental nested "/log <cmd>" invocations
+  while (targetCommand === 'log' && combinedTokens.length > 0) {
+    targetCommand = combinedTokens.shift().replace(/^\/+/, '').toLowerCase();
+    logger.log('PARSER:UNWRAP', `Unwrapped nested /log prefix -> targetCommand="${targetCommand}"`);
+  }
+
+  let remainder = combinedTokens.join(' ').trim();
+
+  // Extract inline key:value or key=value pairs (e.g. order:score, vibe:anime, species:kitsune, user_id:123)
+  const inlineKv = {};
+  remainder = remainder
+    .replace(/\b(order|vibe|species|user_id|cutie|cutie2)[:=]([^\s]+)/gi, (_, k, v) => {
+      inlineKv[k.toLowerCase()] = v.trim();
+      return '';
+    })
+    .trim();
+
+  // Check for inline tags:... or question:... which may span the rest of the string
+  const inlineMultiMatch = remainder.match(/\b(tags|question)[:=](.+)$/i);
+  if (inlineMultiMatch) {
+    inlineKv[inlineMultiMatch[1].toLowerCase()] = inlineMultiMatch[2].trim();
+    remainder = remainder.slice(0, inlineMultiMatch.index).trim();
+  }
+
+  // Extract user mentions (<@123> or <@!123>) or standalone Discord snowflake IDs
+  const extractedUserIds = [];
+  const mentionRegex = /<@!?(\d{15,21})>|\b(\d{17,20})\b/g;
+  let m;
+  while ((m = mentionRegex.exec(remainder)) !== null) {
+    extractedUserIds.push(m[1] || m[2]);
+  }
+  const remainderWithoutMentions = remainder.replace(mentionRegex, '').replace(/\s+/g, ' ').trim();
+
+  logger.log('PARSER:TOKENIZE', `Tokenized target command and inline arguments`, {
+    targetCommand,
+    inlineKv,
+    extractedUserIds,
+    remainderWithoutMentions
+  });
+
+  // Helper to resolve a user by ID
+  async function resolveUserById(rawId, label) {
+    const cleanId = rawId.replace(/[<@!>]/g, '').trim();
+    if (!cleanId) return null;
+    const t0 = performance.now();
+    logger.log('DISCORD:FETCH_USER', `Resolving user for ${label} (id="${cleanId}")`);
+    try {
+      const u = await client.users.fetch(cleanId);
+      logger.log('DISCORD:FETCH_USER_OK', `Resolved ${label} -> ${u.username} (${u.id}) in ${(performance.now() - t0).toFixed(2)}ms`);
+      return u;
+    } catch (err) {
+      logger.log('DISCORD:FETCH_USER_ERR', `Could not fetch user id="${cleanId}" for ${label}`, {
+        error: err?.message || String(err)
+      });
+      return null;
+    }
+  }
+
+  let cutie = explicitOptions.cutie;
+  if (!cutie && inlineKv.cutie) {
+    cutie = await resolveUserById(inlineKv.cutie, 'inlineKv.cutie');
+  }
+  if (!cutie && extractedUserIds[0]) {
+    cutie = await resolveUserById(extractedUserIds[0], 'positional_user_1');
+  }
+
+  let cutie2 = explicitOptions.cutie2;
+  if (!cutie2 && inlineKv.cutie2) {
+    cutie2 = await resolveUserById(inlineKv.cutie2, 'inlineKv.cutie2');
+  }
+  if (!cutie2 && extractedUserIds[1]) {
+    cutie2 = await resolveUserById(extractedUserIds[1], 'positional_user_2');
+  }
+
+  // Resolve vibe, species, order, tags, question, user_id
+  let vibe = explicitOptions.vibe || inlineKv.vibe || null;
+  let species = explicitOptions.species || inlineKv.species || null;
+  let order = explicitOptions.order || inlineKv.order || null;
+  let tags = explicitOptions.tags ?? inlineKv.tags ?? null;
+  let question = explicitOptions.question ?? inlineKv.question ?? null;
+  let user_id = explicitOptions.user_id || inlineKv.user_id || extractedUserIds[0] || null;
+
+  const remTokens = remainderWithoutMentions ? remainderWithoutMentions.split(/\s+/) : [];
+
+  if (targetCommand === 'e621') {
+    const validOrders = ['random', 'score', 'newest'];
+    const filteredTagTokens = [];
+    for (const tok of remTokens) {
+      if (!order && validOrders.includes(tok.toLowerCase())) {
+        order = tok.toLowerCase();
+      } else {
+        filteredTagTokens.push(tok);
+      }
+    }
+    if (tags === null) {
+      tags = filteredTagTokens.join(' ');
+    }
+  } else if (targetCommand === 'furrypic') {
+    const validSpecies = ['neko', 'kitsune', 'okami', 'eevee', 'holo'];
+    if (!species && remTokens.length > 0 && validSpecies.includes(remTokens[0].toLowerCase())) {
+      species = remTokens[0].toLowerCase();
+    }
+  } else if (TARGET_ACTIONS.includes(targetCommand) || SOLO_ACTIONS.includes(targetCommand)) {
+    const validVibes = ['furry', 'anime'];
+    for (const tok of remTokens) {
+      if (!vibe && validVibes.includes(tok.toLowerCase())) {
+        vibe = tok.toLowerCase();
+      }
+    }
+  } else if (targetCommand === '8ball') {
+    if (!question && remainder) {
+      question = remainder;
+    }
+  } else if (targetCommand === 'avatar') {
+    if (!user_id && remTokens[0]) {
+      user_id = remTokens[0];
+    }
+  }
+
+  const resolvedParams = {
+    cutie,
+    cutie2,
+    vibe: vibe || 'furry',
+    tags: tags || '',
+    order: order || 'random',
+    species: species || 'neko',
+    question,
+    user_id
+  };
+
+  logger.log('PARSER:RESOLVED', `Final normalized parameters for /${targetCommand}`, {
+    targetCommand,
+    cutie: resolvedParams.cutie ? `${resolvedParams.cutie.username} (${resolvedParams.cutie.id})` : null,
+    cutie2: resolvedParams.cutie2 ? `${resolvedParams.cutie2.username} (${resolvedParams.cutie2.id})` : null,
+    vibe: resolvedParams.vibe,
+    tags: resolvedParams.tags,
+    order: resolvedParams.order,
+    species: resolvedParams.species,
+    question: resolvedParams.question,
+    user_id: resolvedParams.user_id
+  });
+
+  return { targetCommand, params: resolvedParams };
+}
+
+// Unified command execution engine with deep instrumentation
+async function executeBotCommand(commandName, params, interaction, logger = null) {
+  logger?.log('EXEC:ENTER', `Entering handler for command "/${commandName}"`, {
+    invokerId: interaction.user.id,
+    invokerTag: interaction.user.tag
+  });
+
+  // /e621 — Pull booru images/GIFs from e621.net with custom tags!
+  if (commandName === 'e621') {
+    const rawTags = params.tags || '';
+    const order = params.order || 'random';
+    logger?.log('CMD:E621', `Executing /e621 with tags="${rawTags}" order="${order}"`);
+    const post = await fetchE621Post(rawTags, order, logger);
+
+    if (!post) {
+      logger?.log('CMD:E621_EMPTY', `No valid post returned from e621 for tags="${rawTags}"`);
+      return {
+        content: `Awr~ I couldn't find any image/GIF posts on e621 for \`${rawTags || 'your search'}\`! Try simpler underscore tags like \`deer\`, \`fox cuddle\`, or \`cat_boy\`, >_<`
+      };
+    }
+
+    return buildE621Response(post, rawTags, order, logger);
+  }
+
+  // /furrypic — Random SFW furry / kemonomimi art & GIF card!
+  if (commandName === 'furrypic') {
+    const species = params.species || 'neko';
+    const labelMap = {
+      neko: 'Neko / Catboy',
+      kitsune: 'Kitsune / Fox',
+      okami: 'Okami / Wolf',
+      eevee: 'Eevee',
+      holo: 'Wolf Girl'
+    };
+    logger?.log('CMD:FURRYPIC', `Executing /furrypic for species="${species}" (${labelMap[species] || 'Furry'})`);
+    const mediaUrl = await fetchFurrySpecies(species, logger);
+
+    return {
+      embeds: [{
+        title: `Random ${labelMap[species] || 'Furry'} Cutie~ ${pick('cute', logger)}`,
+        description: `*ears perk up and tail wags happily!* Here is a fresh SFW **${labelMap[species] || species}** card for you, uwu~ ${pick('online', logger)} • [emolarp.fans](${SITE_URL})`,
+        color: PASTEL_PINK,
+        image: mediaUrl ? { url: mediaUrl } : undefined,
+        footer: { text: 'PurrBot SFW • paws & thigh-highs certified :3' }
+      }]
+    };
+  }
+
+  // /oc — Loomie's Deer OC & Profile Card!
+  if (commandName === 'oc') {
+    const t0 = performance.now();
+    logger?.log('CMD:OC', `Fetching owner profile OWNER_ID="${OWNER_ID}" (force=true)`);
+    const loomieUser = await client.users.fetch(OWNER_ID, { force: true }).catch((err) => {
+      logger?.log('CMD:OC_WARN', `Failed to fetch OWNER_ID, falling back to interaction.user`, {
+        error: err?.message || String(err)
+      });
+      return interaction.user;
+    });
+    logger?.log('CMD:OC_USER', `Resolved profile user in ${(performance.now() - t0).toFixed(2)}ms`, {
+      id: loomieUser.id,
+      username: loomieUser.username,
+      ocImageConfigured: Boolean(OC_IMAGE_URL)
+    });
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setLabel("Loomie's Profile :3")
+        .setStyle(ButtonStyle.Link)
+        .setURL(`https://discord.com/users/${OWNER_ID}`),
+      new ButtonBuilder()
+        .setLabel('emolarp.fans ^w^')
+        .setStyle(ButtonStyle.Link)
+        .setURL(SITE_URL)
+    );
+
+    return {
+      embeds: [{
+        title: `Loomie's Deer OC Showcase~ ${pick('cute', logger)}`,
+        description:
+          `*ears perk up and tail wags happily!* Meet **Loomie** (<@${OWNER_ID}>)'s adorable deer kemonomimi/anthro OC! ${pick('online', logger)}\n\n` +
+          `• **Species:** Cozy Deer Kemonomimi / Anthro\n` +
+          `• **Signature Fit:** Oversized pastel hoodie, striped thigh-highs, chokers & fluffy animated tail~\n` +
+          `• **Website:** [emolarp.fans](${SITE_URL}) :3`,
+        color: PASTEL_PINK,
+        thumbnail: { url: loomieUser.displayAvatarURL({ size: 256 }) },
+        image: OC_IMAGE_URL ? { url: OC_IMAGE_URL } : undefined,
+        footer: { text: `Made with love for Loomie • paws & thigh-highs certified ${pick('cute', logger)}` }
+      }],
+      components: [row]
+    };
+  }
+
+  // Target Action Commands + "Return Affection" Button + Small Website Link!
+  if (TARGET_ACTIONS.includes(commandName)) {
+    const action = commandName;
+    let cutie = params.cutie;
+    if (!cutie) {
+      cutie = interaction.user;
+      logger?.log('CMD:TARGET_FALLBACK', `No target "cutie" provided for /${action}; defaulting to invoker ${cutie.username} (${cutie.id})`);
+    }
+    const vibe = params.vibe || 'furry';
+    logger?.log('CMD:TARGET_ACTION', `Running target action "/${action}"`, {
+      fromUser: `${interaction.user.username} (${interaction.user.id})`,
+      toUser: `${cutie.username} (${cutie.id})`,
+      vibe
+    });
+
+    const gif = await fetchActionGif(action, vibe, logger);
+    const count = recordAffectionVerbose(interaction.user.id, cutie.id, logger);
+    const chosen = buildActionCopy(action, interaction.user.id, cutie.id, logger);
+
+    const backCustomId = `back:${action}:${interaction.user.id}:${cutie.id}:${vibe}`;
+    const backBtn = new ButtonBuilder()
+      .setCustomId(backCustomId)
+      .setLabel(chosen.backLabel)
+      .setStyle(ButtonStyle.Secondary);
+
+    const row = new ActionRowBuilder().addComponents(backBtn);
+    logger?.log('COMPONENT:BACK_BTN', `Built Return-Affection interactive button`, {
+      customId: backCustomId,
+      label: chosen.backLabel
+    });
+
+    return {
+      embeds: [{
+        title: chosen.title,
+        description: `${chosen.text}\n\n*Combo with <@${cutie.id}>: **${count}** time${count === 1 ? '' : 's'}! ^w^* • [emolarp.fans](${SITE_URL})`,
+        color: PASTEL_PINK,
+        thumbnail: { url: cutie.displayAvatarURL({ size: 256 }) },
+        image: gif?.url ? { url: gif.url } : undefined,
+        footer: {
+          text: gif?.source
+            ? `${gif.source} • paws & thigh-highs certified :3`
+            : 'paws & thigh-highs certified uwu :3'
+        }
+      }],
+      components: [row]
+    };
+  }
+
+  // Solo / Optional-Target Reaction Commands (/blush, /tailwag, /purr, /howl)
+  if (SOLO_ACTIONS.includes(commandName)) {
+    const action = commandName;
+    const cutie = params.cutie || null;
+    const vibe = params.vibe || 'furry';
+    logger?.log('CMD:SOLO_ACTION', `Running reaction command "/${action}"`, {
+      mode: cutie ? 'targeted' : 'solo',
+      targetUser: cutie ? `${cutie.username} (${cutie.id})` : null,
+      vibe
+    });
+
+    const gif = await fetchActionGif(action, vibe, logger);
+
+    let title = '';
+    let description = '';
+
+    if (action === 'blush') {
+      title = `Flustered & Blushing~!! ${pick('blush', logger)}`;
+      description = cutie
+        ? `*hides face inside oversized pastel hoodie sleeves*\n\n<@${cutie.id}> made <@${interaction.user.id}> blush super bright pink!! ${pick('blush', logger)} • [emolarp.fans](${SITE_URL})`
+        : `*pulls hoodie sleeves over hands and looks away*\n\n<@${interaction.user.id}> is blushing so hard right now, uwu~!! ${pick('blush', logger)} • [emolarp.fans](${SITE_URL})`;
+    } else if (action === 'tailwag') {
+      title = `Happy Tail Wags~!! ${pick('online', logger)}`;
+      description = cutie
+        ? `*ears perk up straight and tail swishes back and forth at max speed*\n\n<@${interaction.user.id}> is wagging their tail super happily at <@${cutie.id}>!! ${pick('online', logger)} • [emolarp.fans](${SITE_URL})`
+        : `*bounces on tiptoes in striped thigh-highs*\n\n<@${interaction.user.id}> can't stop wagging their tail happily!! ${pick('online', logger)} • [emolarp.fans](${SITE_URL})`;
+    } else if (action === 'purr') {
+      title = `Cozy Catboy Purrs~ prrrrr :3`;
+      description = cutie
+        ? `*curls up in an oversized pastel hoodie and rumbles softly*\n\n<@${interaction.user.id}> is purring happily for <@${cutie.id}>!! ${pick('snuggle', logger)} • [emolarp.fans](${SITE_URL})`
+        : `*kneads soft paws on a fluffy blanket*\n\n*prrrrrrrr~* <@${interaction.user.id}> is super cozy and purring loudly!! ${pick('snuggle', logger)} • [emolarp.fans](${SITE_URL})`;
+    } else {
+      title = `Cute Little Awooo~ ^w^`;
+      description = cutie
+        ? `*tilts head back and perks up fluffy ears*\n\n*awooooooo~!!* <@${interaction.user.id}> lets out a cute little howl with <@${cutie.id}>!! ${pick('online', logger)} • [emolarp.fans](${SITE_URL})`
+        : `*ears perk up and tail wags*\n\n*awooooooo~!!* <@${interaction.user.id}> lets out the cutest little howl!! ${pick('online', logger)} • [emolarp.fans](${SITE_URL})`;
+    }
+
+    return {
+      embeds: [{
+        title,
+        description,
+        color: PASTEL_LAVENDER,
+        thumbnail: { url: (cutie || interaction.user).displayAvatarURL({ size: 256 }) },
+        image: gif?.url ? { url: gif.url } : undefined,
+        footer: {
+          text: gif?.source
+            ? `${gif.source} • paws & thigh-highs certified :3`
+            : 'paws & thigh-highs certified uwu :3'
+        }
+      }]
+    };
+  }
+
+  // /cutemeter
+  if (commandName === 'cutemeter') {
+    const cutie = params.cutie || interaction.user;
+    const isOwner = cutie.id === OWNER_ID;
+    const remainder = Number(BigInt(cutie.id) % 31n);
+    const score = isOwner ? 100 : remainder + 70;
+    const bars = Math.round(score / 10);
+    const meter = `[${'='.repeat(bars)}${'-'.repeat(10 - bars)}]`;
+
+    logger?.log('MATH:CUTEMETER', `Computed cuteness score for user ${cutie.username} (${cutie.id})`, {
+      userIdBigInt: cutie.id,
+      isOwnerOverride: isOwner,
+      mod31Remainder: remainder,
+      computedScore: score,
+      filledBars: bars,
+      meter
+    });
+
+    let verdict = `Certified adorable! Deserves unlimited headpats ${pick('headpat', logger)}`;
+    if (score >= 95) verdict = `MAXIMUM OVERLOAD!! Certified pastel thigh-high & oversized-hoodie icon!! ${pick('online', logger)}`;
+    else if (score >= 85) verdict = `Super fluffy & dangerously cute! Extra snuggles required ${pick('snuggle', logger)}`;
+
+    return {
+      embeds: [{
+        title: `Official Paw & Thigh-High Cute Meter~ ${pick('cute', logger)}`,
+        description: `*ears perk up and scanner beeps happily!*\n\n**Target:** <@${cutie.id}>\n**Cuteness Score:** **${score}%** \`${meter}\`\n**Verdict:** ${verdict}\n\n[emolarp.fans](${SITE_URL}) :3`,
+        color: PASTEL_PINK,
+        thumbnail: { url: cutie.displayAvatarURL({ size: 256 }) }
+      }]
+    };
+  }
+
+  // /ship
+  if (commandName === 'ship') {
+    let c1 = params.cutie;
+    let c2 = params.cutie2;
+    if (!c1) {
+      c1 = interaction.user;
+      logger?.log('CMD:SHIP_FALLBACK', `cutie1 not provided; defaulting to invoker ${c1.username} (${c1.id})`);
+    }
+    if (!c2) {
+      c2 = client.user || interaction.user;
+      logger?.log('CMD:SHIP_FALLBACK', `cutie2 not provided; defaulting to ${c2.username} (${c2.id})`);
+    }
+
+    const split1 = Math.ceil(c1.username.length / 2);
+    const split2 = Math.floor(c2.username.length / 2);
+    const name1 = c1.username.slice(0, split1);
+    const name2 = c2.username.slice(split2);
+    const shipName = `${name1}${name2}`;
+    const combined = BigInt(c1.id) + BigInt(c2.id);
+    const mod41 = Number(combined % 41n);
+    const score = mod41 + 60;
+
+    logger?.log('MATH:SHIP', `Calculated ship compatibility and combined name`, {
+      user1: `${c1.username} (${c1.id})`,
+      user2: `${c2.username} (${c2.id})`,
+      name1Slice: name1,
+      name2Slice: name2,
+      shipName,
+      combinedBigInt: combined.toString(),
+      mod41,
+      finalScore: score
+    });
+
+    return {
+      embeds: [{
+        title: `Pastel Ship Compatibility~ ${pick('affection', logger)}`,
+        description:
+          `*paws at the air excitedly!*\n\n` +
+          `<@${c1.id}> + <@${c2.id}> = **${shipName}** ${pick('cute', logger)}\n` +
+          `**Snuggle Compatibility:** **${score}%**!\n\n` +
+          `${score >= 85 ? `*Destined for matching thigh-highs & endless cuddle piles!! ${pick('snuggle', logger)}*` : `*Super sweet duo! Definitely share a hoodie together uwu :3*`}\n\n` +
+          `[emolarp.fans](${SITE_URL}) ^w^`,
+        color: PASTEL_PURPLE
+      }]
+    };
+  }
+
+  // /8ball
+  if (commandName === '8ball') {
+    let question = params.question;
+    if (!question) {
+      question = 'Will I get extra headpats and cozy snuggles today?';
+      logger?.log('CMD:8BALL_FALLBACK', `No question provided; using default diagnostic question="${question}"`);
+    }
+    const replies = [
+      `Yeeeesss, 100%!! ${pick('online', logger)}`,
+      `My ears perked up—signs point to yes, uwu~ :3`,
+      `Definitely!! Treat yourself to extra headpats too ^w^`,
+      `Hmm... ask again after a cozy nap and some snuggles~ (－_－) zzZ`,
+      `My tail says maybe! Let's see how the vibes go~ ${pick('cute', logger)}`,
+      `Awr, doesn't look like it right now >_<`,
+      `Nuh-uh, my paws say no this time! ${pick('blush', logger)}`
+    ];
+    const idx = Math.floor(Math.random() * replies.length);
+    const answer = replies[idx];
+
+    logger?.log('RNG:8BALL', `Rolled 8-ball crystal ball response`, {
+      question,
+      poolSize: replies.length,
+      selectedIndex: idx,
+      answer
+    });
+
+    return {
+      embeds: [{
+        title: `Pastel Catboy 8-Ball~ ${pick('cute', logger)}`,
+        description: `*shakes paws and peers into a glowing pink crystal ball*\n\n**Question:** ${question}\n**Answer:** **${answer}**\n\n[emolarp.fans](${SITE_URL}) :3`,
+        color: PASTEL_LAVENDER
+      }]
+    };
+  }
+
+  // /lovecount
+  if (commandName === 'lovecount') {
+    let cutie = params.cutie;
+    if (!cutie) {
+      cutie = interaction.user;
+      logger?.log('CMD:LOVECOUNT_FALLBACK', `No target cutie provided; defaulting to invoker ${cutie.username} (${cutie.id})`);
+    }
+    const key = `${interaction.user.id}->${cutie.id}`;
+    const count = affectionCounts.get(key) || 0;
+    logger?.log('STATE:LOOKUP', `Looked up affection count in affectionCounts map`, {
+      lookupKey: key,
+      foundValue: count,
+      totalMapEntries: affectionCounts.size,
+      totalAffectionDelivered
+    });
+
+    return {
+      embeds: [{
+        title: `Affection Meter~ ${pick('affection', logger)}`,
+        description: `*tail wags happily!*\n\n<@${interaction.user.id}> has shared affection with <@${cutie.id}> **${count}** time${count === 1 ? '' : 's'}! ${pick('cute', logger)}\n\n[emolarp.fans](${SITE_URL}) :3`,
+        color: PASTEL_PINK,
+        thumbnail: { url: cutie.displayAvatarURL({ size: 256 }) }
+      }]
+    };
+  }
+
+  // /avatar (with clickable Discord Profile link button + emolarp.fans!)
+  if (commandName === 'avatar') {
+    const rawInput = params.user_id || (params.cutie ? params.cutie.id : null);
+    const rawId = rawInput ? rawInput.replace(/[<@!>]/g, '').trim() : interaction.user.id;
+    logger?.log('CMD:AVATAR', `Resolving full user profile & assets`, {
+      rawInput,
+      sanitizedSnowflakeId: rawId
+    });
+
+    try {
+      const t0 = performance.now();
+      const fullUser = await client.users.fetch(rawId, { force: true });
+      const latencyMs = (performance.now() - t0).toFixed(2);
+      const avatarUrl = fullUser.displayAvatarURL({ size: 512 });
+      const bannerUrl = fullUser.bannerURL({ size: 1024 });
+      const decoUrl = fullUser.avatarDecorationURL({ size: 512 });
+
+      logger?.log('DISCORD:USER_ASSETS', `Fetched user profile in ${latencyMs}ms`, {
+        id: fullUser.id,
+        username: fullUser.username,
+        globalName: fullUser.globalName || null,
+        avatarUrl,
+        bannerUrl: bannerUrl || null,
+        decoUrl: decoUrl || null
+      });
+
+      return {
+        embeds: [{
+          title: `${fullUser.username}'s Lookbook~ ${pick('cute', logger)}`,
+          description: `*ears perk up!* Showing **${fullUser.username}** (\`${fullUser.id}\`), uwu~ • [emolarp.fans](${SITE_URL})`,
+          color: PASTEL_PURPLE,
+          thumbnail: { url: avatarUrl },
+          image: bannerUrl ? { url: bannerUrl } : undefined,
+          fields: [
+            { name: 'Username', value: `\`${fullUser.username}\``, inline: true },
+            { name: 'Display Name', value: `\`${fullUser.globalName || 'None'}\``, inline: true }
+          ],
+          timestamp: new Date().toISOString()
+        }],
+        components: buildAssetButtons(avatarUrl, bannerUrl, decoUrl, fullUser.id, logger)
+      };
+    } catch (err) {
+      logger?.log('DISCORD:USER_ERR', `Failed to fetch user with ID "${rawId}"`, {
+        error: err?.message || String(err)
+      });
+      return {
+        content: `Awr~ I couldn’t find anyone with that ID! Make sure Developer Mode is on and copy the numeric User ID, >_<`
+      };
+    }
+  }
+
+  // /stats
+  if (commandName === 'stats') {
+    const uptimeSec = Math.floor(process.uptime());
+    const mins = Math.floor(uptimeSec / 60);
+    const hrs = Math.floor(mins / 60);
+    const mem = process.memoryUsage();
+    logger?.log('CMD:STATS', `Collected runtime & bot telemetry`, {
+      wsPingMs: client.ws.ping,
+      uptimeSec,
+      formattedUptime: `${hrs}h ${mins % 60}m`,
+      totalAffectionDelivered,
+      trackedAffectionPairs: affectionCounts.size,
+      rssMB: (mem.rss / 1048576).toFixed(2),
+      heapUsedMB: (mem.heapUsed / 1048576).toFixed(2)
+    });
+
+    return {
+      embeds: [{
+        title: `furry Status & Paw-formance~ ${pick('online', logger)}`,
+        description: `*tail wags happily!* Built for Loomie—cozy, awake, and ready for snuggles in DMs and servers, uwu~\n\nWebsite: [emolarp.fans](${SITE_URL}) :3`,
+        color: PASTEL_LAVENDER,
+        fields: [
+          { name: 'Ping', value: `\`${client.ws.ping}ms\``, inline: true },
+          { name: 'Awake For', value: `\`${hrs}h ${mins % 60}m\``, inline: true },
+          { name: 'Total Affection Given', value: `\`${totalAffectionDelivered}\` combos ${pick('affection', logger)}`, inline: true }
+        ]
+      }],
+      ephemeral: true
+    };
+  }
+
+  const validList = ALL_COMMANDS.filter((c) => c !== 'log').join(', ');
+  logger?.log('EXEC:UNKNOWN_CMD', `Unrecognized command "${commandName}"`, {
+    requestedCommand: commandName,
+    supportedCommands: validList
+  });
+  return {
+    content: `Awr~ Unknown command \`/${commandName}\`! >_<\nAvailable commands to run with \`/log\`: \`${validList}\` :3`
   };
 }
 
@@ -723,307 +1605,102 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   if (!interaction.isChatInputCommand()) return;
 
-  // /e621 — Pull booru images/GIFs from e621.net with custom tags!
-  if (interaction.commandName === 'e621') {
+  // /log — Run any command and its arguments while printing extremely verbose logs into the main command output!
+  if (interaction.commandName === 'log') {
+    const logger = new VerboseLogger(true);
+    const memStart = process.memoryUsage();
+
+    logger.log('INIT', `Initialized extremely verbose execution logger for /log`, {
+      interactionId: interaction.id,
+      user: `${interaction.user.tag} (${interaction.user.id})`,
+      guildId: interaction.guildId || 'DM',
+      channelId: interaction.channelId,
+      locale: interaction.locale
+    });
+
+    logger.log('RUNTIME', `Process & Gateway telemetry snapshot`, {
+      nodeVersion: process.version,
+      platform: `${process.platform}/${process.arch}`,
+      pid: process.pid,
+      uptimeSec: Math.floor(process.uptime()),
+      wsPingMs: client.ws.ping,
+      rssMB: (memStart.rss / 1048576).toFixed(2),
+      heapUsedMB: (memStart.heapUsed / 1048576).toFixed(2)
+    });
+
+    const deferStart = performance.now();
     await interaction.deferReply();
-    const rawTags = interaction.options.getString('tags') || '';
-    const order = interaction.options.getString('order') || 'random';
-    const post = await fetchE621Post(rawTags, order);
+    logger.log('DISCORD:DEFER', `Deferred interaction reply in ${(performance.now() - deferStart).toFixed(2)}ms`);
 
-    if (!post) {
-      return interaction.editReply(
-        `Awr~ I couldn't find any image/GIF posts on e621 for \`${rawTags || 'your search'}\`! Try simpler underscore tags like \`deer\`, \`fox cuddle\`, or \`cat_boy\`, >_<`
-      );
-    }
+    const { targetCommand, params } = await parseLogCommandInput(interaction, logger);
+    const resultPayload = await executeBotCommand(targetCommand, params, interaction, logger);
 
-    await interaction.editReply(buildE621Response(post, rawTags, order));
-    return;
-  }
+    const memEnd = process.memoryUsage();
+    const totalMs = (performance.now() - logger.startTime).toFixed(2);
+    logger.log('PAYLOAD:READY', `Command "/${targetCommand}" produced output payload`, {
+      hasContent: Boolean(resultPayload.content),
+      embedCount: resultPayload.embeds?.length || 0,
+      componentRows: resultPayload.components?.length || 0,
+      originalEphemeral: Boolean(resultPayload.ephemeral)
+    });
+    logger.log('COMPLETE', `Finished /${targetCommand} execution in ${totalMs}ms`, {
+      totalDurationMs: Number(totalMs),
+      totalLogEntries: logger.entries.length + 1,
+      heapUsedMB: (memEnd.heapUsed / 1048576).toFixed(2),
+      heapDeltaKB: ((memEnd.heapUsed - memStart.heapUsed) / 1024).toFixed(2)
+    });
 
-  // /furrypic — Random SFW furry / kemonomimi art & GIF card!
-  if (interaction.commandName === 'furrypic') {
-    await interaction.deferReply();
-    const species = interaction.options.getString('species') || 'neko';
-    const mediaUrl = await fetchFurrySpecies(species);
-    const labelMap = {
-      neko: 'Neko / Catboy',
-      kitsune: 'Kitsune / Fox',
-      okami: 'Okami / Wolf',
-      eevee: 'Eevee',
-      holo: 'Wolf Girl'
+    // Build main command output with extremely verbose logs printed directly into the output
+    const baseContent = resultPayload.content ? `${resultPayload.content}\n\n` : '';
+    const header = `**📋 Extremely Verbose Execution Log (\`/${targetCommand}\` • \`${totalMs}ms\` • \`${logger.entries.length} events\`)**`;
+    const maxLogCharsForContent = Math.max(400, 1950 - baseContent.length - header.length - 16);
+    const formattedLogForContent = logger.format(maxLogCharsForContent);
+    const contentWithLogs = `${baseContent}${header}\n\`\`\`log\n${formattedLogForContent}\n\`\`\``;
+
+    const finalPayload = {
+      ...resultPayload,
+      content: contentWithLogs
     };
+    delete finalPayload.ephemeral;
 
-    await interaction.editReply({
-      embeds: [{
-        title: `Random ${labelMap[species] || 'Furry'} Cutie~ ${pick('cute')}`,
-        description: `*ears perk up and tail wags happily!* Here is a fresh SFW **${labelMap[species] || species}** card for you, uwu~ ${pick('online')} • [emolarp.fans](${SITE_URL})`,
-        color: PASTEL_PINK,
-        image: mediaUrl ? { url: mediaUrl } : undefined,
-        footer: { text: 'PurrBot SFW • paws & thigh-highs certified :3' }
-      }]
-    });
-    return;
-  }
-
-  // /oc — Loomie's Deer OC & Profile Card!
-  if (interaction.commandName === 'oc') {
-    await interaction.deferReply();
-    const loomieUser = await client.users.fetch(OWNER_ID, { force: true }).catch(() => interaction.user);
-
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setLabel("Loomie's Profile :3")
-        .setStyle(ButtonStyle.Link)
-        .setURL(`https://discord.com/users/${OWNER_ID}`),
-      new ButtonBuilder()
-        .setLabel('emolarp.fans ^w^')
-        .setStyle(ButtonStyle.Link)
-        .setURL(SITE_URL)
-    );
-
-    await interaction.editReply({
-      embeds: [{
-        title: `Loomie's Deer OC Showcase~ ${pick('cute')}`,
-        description:
-          `*ears perk up and tail wags happily!* Meet **Loomie** (<@${OWNER_ID}>)'s adorable deer kemonomimi/anthro OC! ${pick('online')}\n\n` +
-          `• **Species:** Cozy Deer Kemonomimi / Anthro\n` +
-          `• **Signature Fit:** Oversized pastel hoodie, striped thigh-highs, chokers & fluffy animated tail~\n` +
-          `• **Website:** [emolarp.fans](${SITE_URL}) :3`,
-        color: PASTEL_PINK,
-        thumbnail: { url: loomieUser.displayAvatarURL({ size: 256 }) },
-        image: OC_IMAGE_URL ? { url: OC_IMAGE_URL } : undefined,
-        footer: { text: `Made with love for Loomie • paws & thigh-highs certified ${pick('cute')}` }
-      }],
-      components: [row]
-    });
-    return;
-  }
-
-  const targetActions = ['snuggle', 'hug', 'lick', 'kiss', 'headpat', 'earscratch', 'boop', 'bite', 'milk', 'bonk'];
-  const soloActions = ['blush', 'tailwag', 'purr', 'howl'];
-
-  // Target Action Commands + "Return Affection" Button + Small Website Link!
-  if (targetActions.includes(interaction.commandName)) {
-    await interaction.deferReply();
-    const action = interaction.commandName;
-    const cutie = interaction.options.getUser('cutie', true);
-    const vibe = interaction.options.getString('vibe') || 'furry';
-    const gif = await fetchActionGif(action, vibe);
-    const count = recordAffection(interaction.user.id, cutie.id);
-    const chosen = buildActionCopy(action, interaction.user.id, cutie.id);
-
-    const backBtn = new ButtonBuilder()
-      .setCustomId(`back:${action}:${interaction.user.id}:${cutie.id}:${vibe}`)
-      .setLabel(chosen.backLabel)
-      .setStyle(ButtonStyle.Secondary);
-
-    const row = new ActionRowBuilder().addComponents(backBtn);
-
-    await interaction.editReply({
-      embeds: [{
-        title: chosen.title,
-        description: `${chosen.text}\n\n*Combo with <@${cutie.id}>: **${count}** time${count === 1 ? '' : 's'}! ^w^* • [emolarp.fans](${SITE_URL})`,
-        color: PASTEL_PINK,
-        thumbnail: { url: cutie.displayAvatarURL({ size: 256 }) },
-        image: gif?.url ? { url: gif.url } : undefined,
-        footer: {
-          text: gif?.source
-            ? `${gif.source} • paws & thigh-highs certified :3`
-            : 'paws & thigh-highs certified uwu :3'
-        }
-      }],
-      components: [row]
-    });
-    return;
-  }
-
-  // Solo / Optional-Target Reaction Commands (/blush, /tailwag, /purr, /howl)
-  if (soloActions.includes(interaction.commandName)) {
-    await interaction.deferReply();
-    const action = interaction.commandName;
-    const cutie = interaction.options.getUser('cutie');
-    const vibe = interaction.options.getString('vibe') || 'furry';
-    const gif = await fetchActionGif(action, vibe);
-
-    let title = '';
-    let description = '';
-
-    if (action === 'blush') {
-      title = `Flustered & Blushing~!! ${pick('blush')}`;
-      description = cutie
-        ? `*hides face inside oversized pastel hoodie sleeves*\n\n<@${cutie.id}> made <@${interaction.user.id}> blush super bright pink!! ${pick('blush')} • [emolarp.fans](${SITE_URL})`
-        : `*pulls hoodie sleeves over hands and looks away*\n\n<@${interaction.user.id}> is blushing so hard right now, uwu~!! ${pick('blush')} • [emolarp.fans](${SITE_URL})`;
-    } else if (action === 'tailwag') {
-      title = `Happy Tail Wags~!! ${pick('online')}`;
-      description = cutie
-        ? `*ears perk up straight and tail swishes back and forth at max speed*\n\n<@${interaction.user.id}> is wagging their tail super happily at <@${cutie.id}>!! ${pick('online')} • [emolarp.fans](${SITE_URL})`
-        : `*bounces on tiptoes in striped thigh-highs*\n\n<@${interaction.user.id}> can't stop wagging their tail happily!! ${pick('online')} • [emolarp.fans](${SITE_URL})`;
-    } else if (action === 'purr') {
-      title = `Cozy Catboy Purrs~ prrrrr :3`;
-      description = cutie
-        ? `*curls up in an oversized pastel hoodie and rumbles softly*\n\n<@${interaction.user.id}> is purring happily for <@${cutie.id}>!! ${pick('snuggle')} • [emolarp.fans](${SITE_URL})`
-        : `*kneads soft paws on a fluffy blanket*\n\n*prrrrrrrr~* <@${interaction.user.id}> is super cozy and purring loudly!! ${pick('snuggle')} • [emolarp.fans](${SITE_URL})`;
-    } else {
-      title = `Cute Little Awooo~ ^w^`;
-      description = cutie
-        ? `*tilts head back and perks up fluffy ears*\n\n*awooooooo~!!* <@${interaction.user.id}> lets out a cute little howl with <@${cutie.id}>!! ${pick('online')} • [emolarp.fans](${SITE_URL})`
-        : `*ears perk up and tail wags*\n\n*awooooooo~!!* <@${interaction.user.id}> lets out the cutest little howl!! ${pick('online')} • [emolarp.fans](${SITE_URL})`;
+    // Also attach the verbose log trace inside the main embed description if an embed is present
+    if (finalPayload.embeds?.length > 0) {
+      const mainEmbed = { ...finalPayload.embeds[0] };
+      const origDesc = mainEmbed.description || '';
+      const embedLogSectionHeader = `\n\n**📋 Verbose Execution Trace (\`/${targetCommand}\`):**\n`;
+      const maxLogCharsForEmbed = Math.max(400, 3900 - origDesc.length - embedLogSectionHeader.length - 16);
+      const formattedLogForEmbed = logger.format(maxLogCharsForEmbed);
+      mainEmbed.description = `${origDesc}${embedLogSectionHeader}\`\`\`log\n${formattedLogForEmbed}\n\`\`\``;
+      finalPayload.embeds = [mainEmbed, ...finalPayload.embeds.slice(1)];
     }
 
-    await interaction.editReply({
-      embeds: [{
-        title,
-        description,
-        color: PASTEL_LAVENDER,
-        thumbnail: { url: (cutie || interaction.user).displayAvatarURL({ size: 256 }) },
-        image: gif?.url ? { url: gif.url } : undefined,
-        footer: {
-          text: gif?.source
-            ? `${gif.source} • paws & thigh-highs certified :3`
-            : 'paws & thigh-highs certified uwu :3'
-        }
-      }]
-    });
+    await interaction.editReply(finalPayload);
     return;
   }
 
-  // /cutemeter
-  if (interaction.commandName === 'cutemeter') {
-    const cutie = interaction.options.getUser('cutie') || interaction.user;
-    const score = cutie.id === OWNER_ID ? 100 : ((Number(BigInt(cutie.id) % 31n)) + 70);
-    const bars = Math.round(score / 10);
-    const meter = `[${'='.repeat(bars)}${'-'.repeat(10 - bars)}]`;
-
-    let verdict = `Certified adorable! Deserves unlimited headpats ${pick('headpat')}`;
-    if (score >= 95) verdict = `MAXIMUM OVERLOAD!! Certified pastel thigh-high & oversized-hoodie icon!! ${pick('online')}`;
-    else if (score >= 85) verdict = `Super fluffy & dangerously cute! Extra snuggles required ${pick('snuggle')}`;
-
-    await interaction.reply({
-      embeds: [{
-        title: `Official Paw & Thigh-High Cute Meter~ ${pick('cute')}`,
-        description: `*ears perk up and scanner beeps happily!*\n\n**Target:** <@${cutie.id}>\n**Cuteness Score:** **${score}%** \`${meter}\`\n**Verdict:** ${verdict}\n\n[emolarp.fans](${SITE_URL}) :3`,
-        color: PASTEL_PINK,
-        thumbnail: { url: cutie.displayAvatarURL({ size: 256 }) }
-      }]
-    });
-    return;
-  }
-
-  // /ship
-  if (interaction.commandName === 'ship') {
-    const c1 = interaction.options.getUser('cutie1', true);
-    const c2 = interaction.options.getUser('cutie2', true);
-    const name1 = c1.username.slice(0, Math.ceil(c1.username.length / 2));
-    const name2 = c2.username.slice(Math.floor(c2.username.length / 2));
-    const shipName = `${name1}${name2}`;
-    const combined = BigInt(c1.id) + BigInt(c2.id);
-    const score = Number(combined % 41n) + 60;
-
-    await interaction.reply({
-      embeds: [{
-        title: `Pastel Ship Compatibility~ ${pick('affection')}`,
-        description:
-          `*paws at the air excitedly!*\n\n` +
-          `<@${c1.id}> + <@${c2.id}> = **${shipName}** ${pick('cute')}\n` +
-          `**Snuggle Compatibility:** **${score}%**!\n\n` +
-          `${score >= 85 ? `*Destined for matching thigh-highs & endless cuddle piles!! ${pick('snuggle')}*` : `*Super sweet duo! Definitely share a hoodie together uwu :3*`}\n\n` +
-          `[emolarp.fans](${SITE_URL}) ^w^`,
-        color: PASTEL_PURPLE
-      }]
-    });
-    return;
-  }
-
-  // /8ball
-  if (interaction.commandName === '8ball') {
-    const question = interaction.options.getString('question', true);
-    const replies = [
-      `Yeeeesss, 100%!! ${pick('online')}`,
-      `My ears perked up—signs point to yes, uwu~ :3`,
-      `Definitely!! Treat yourself to extra headpats too ^w^`,
-      `Hmm... ask again after a cozy nap and some snuggles~ (－_－) zzZ`,
-      `My tail says maybe! Let's see how the vibes go~ ${pick('cute')}`,
-      `Awr, doesn't look like it right now >_<`,
-      `Nuh-uh, my paws say no this time! ${pick('blush')}`
-    ];
-    const answer = replies[Math.floor(Math.random() * replies.length)];
-
-    await interaction.reply({
-      embeds: [{
-        title: `Pastel Catboy 8-Ball~ ${pick('cute')}`,
-        description: `*shakes paws and peers into a glowing pink crystal ball*\n\n**Question:** ${question}\n**Answer:** **${answer}**\n\n[emolarp.fans](${SITE_URL}) :3`,
-        color: PASTEL_LAVENDER
-      }]
-    });
-    return;
-  }
-
-  // /lovecount
-  if (interaction.commandName === 'lovecount') {
-    const cutie = interaction.options.getUser('cutie', true);
-    const count = affectionCounts.get(`${interaction.user.id}->${cutie.id}`) || 0;
-    await interaction.reply({
-      embeds: [{
-        title: `Affection Meter~ ${pick('affection')}`,
-        description: `*tail wags happily!*\n\n<@${interaction.user.id}> has shared affection with <@${cutie.id}> **${count}** time${count === 1 ? '' : 's'}! ${pick('cute')}\n\n[emolarp.fans](${SITE_URL}) :3`,
-        color: PASTEL_PINK,
-        thumbnail: { url: cutie.displayAvatarURL({ size: 256 }) }
-      }]
-    });
-    return;
-  }
-
-  // /avatar (with clickable Discord Profile link button + emolarp.fans!)
-  if (interaction.commandName === 'avatar') {
+  // Standard direct command execution
+  const deferredCommands = ['e621', 'furrypic', 'oc', ...TARGET_ACTIONS, ...SOLO_ACTIONS, 'avatar'];
+  const needsDefer = deferredCommands.includes(interaction.commandName);
+  if (needsDefer) {
     await interaction.deferReply();
-    const rawInput = interaction.options.getString('user_id');
-    const rawId = rawInput ? rawInput.replace(/[<@!>]/g, '').trim() : interaction.user.id;
-
-    try {
-      const fullUser = await client.users.fetch(rawId, { force: true });
-      const avatarUrl = fullUser.displayAvatarURL({ size: 512 });
-      const bannerUrl = fullUser.bannerURL({ size: 1024 });
-      const decoUrl = fullUser.avatarDecorationURL({ size: 512 });
-
-      await interaction.editReply({
-        embeds: [{
-          title: `${fullUser.username}'s Lookbook~ ${pick('cute')}`,
-          description: `*ears perk up!* Showing **${fullUser.username}** (\`${fullUser.id}\`), uwu~ • [emolarp.fans](${SITE_URL})`,
-          color: PASTEL_PURPLE,
-          thumbnail: { url: avatarUrl },
-          image: bannerUrl ? { url: bannerUrl } : undefined,
-          fields: [
-            { name: 'Username', value: `\`${fullUser.username}\``, inline: true },
-            { name: 'Display Name', value: `\`${fullUser.globalName || 'None'}\``, inline: true }
-          ],
-          timestamp: new Date().toISOString()
-        }],
-        components: buildAssetButtons(avatarUrl, bannerUrl, decoUrl, fullUser.id)
-      });
-    } catch {
-      await interaction.editReply(`Awr~ I couldn’t find anyone with that ID! Make sure Developer Mode is on and copy the numeric User ID, >_<`);
-    }
-    return;
   }
 
-  // /stats
-  if (interaction.commandName === 'stats') {
-    const uptimeSec = Math.floor(process.uptime());
-    const mins = Math.floor(uptimeSec / 60);
-    const hrs = Math.floor(mins / 60);
-    await interaction.reply({
-      embeds: [{
-        title: `furry Status & Paw-formance~ ${pick('online')}`,
-        description: `*tail wags happily!* Built for Loomie—cozy, awake, and ready for snuggles in DMs and servers, uwu~\n\nWebsite: [emolarp.fans](${SITE_URL}) :3`,
-        color: PASTEL_LAVENDER,
-        fields: [
-          { name: 'Ping', value: `\`${client.ws.ping}ms\``, inline: true },
-          { name: 'Awake For', value: `\`${hrs}h ${mins % 60}m\``, inline: true },
-          { name: 'Total Affection Given', value: `\`${totalAffectionDelivered}\` combos ${pick('affection')}`, inline: true }
-        ]
-      }],
-      ephemeral: true
-    });
+  const directParams = {
+    cutie: interaction.options.getUser('cutie') || interaction.options.getUser('cutie1') || null,
+    cutie2: interaction.options.getUser('cutie2') || null,
+    vibe: interaction.options.getString('vibe') || 'furry',
+    tags: interaction.options.getString('tags') || '',
+    order: interaction.options.getString('order') || 'random',
+    species: interaction.options.getString('species') || 'neko',
+    question: interaction.options.getString('question') || null,
+    user_id: interaction.options.getString('user_id') || null
+  };
+
+  const payload = await executeBotCommand(interaction.commandName, directParams, interaction, null);
+  if (needsDefer) {
+    await interaction.editReply(payload);
+  } else {
+    await interaction.reply(payload);
   }
 });
 
