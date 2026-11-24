@@ -18,9 +18,13 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
+// Safe URL builder so clipboard extensions never turn URLs into Markdown links!
+const HTTPS = ['https:', ''].join('//');
+const makeUrl = (host, path = '') => `${HTTPS}${host}${path}`;
+
 // Loomie's User ID & Website
 const OWNER_ID = '1416390397881749514';
-const SITE_URL = 'https://emolarp.fans';
+const SITE_URL = makeUrl('emolarp.fans');
 const OC_IMAGE_URL = (process.env.OC_IMAGE_URL || '').trim();
 
 // In-memory affection counter
@@ -205,7 +209,7 @@ async function fetchActionGif(action, vibe = 'furry', logger = null) {
 
   // 1. Try PurrBot Furry / Kemonomimi first when vibe === 'furry'
   if (vibe === 'furry' && purrMap[action]) {
-    const purrUrl = `[https://api.purrbot.site/v2/img/sfw/$](https://api.purrbot.site/v2/img/sfw/$){purrMap[action]}/gif`;
+    const purrUrl = makeUrl('api.purrbot.site', `/v2/img/sfw/${purrMap[action]}/gif`);
     const t0 = performance.now();
     logger?.log('HTTP:REQ', `Tier 1 [PurrBot] GET ${purrUrl}`, { timeoutMs: 5000 });
     try {
@@ -243,7 +247,7 @@ async function fetchActionGif(action, vibe = 'furry', logger = null) {
   // 2. Try Nekos.best SFW
   try {
     const endpoint = nekosMap[action] || 'cuddle';
-    const nekosUrl = `[https://nekos.best/api/v2/$](https://nekos.best/api/v2/$){endpoint}`;
+    const nekosUrl = makeUrl('nekos.best', `/api/v2/${endpoint}`);
     const t0 = performance.now();
     logger?.log('HTTP:REQ', `Tier 2 [Nekos.best] GET ${nekosUrl}`, { timeoutMs: 5000 });
     const res = await fetch(nekosUrl, {
@@ -283,7 +287,7 @@ async function fetchActionGif(action, vibe = 'furry', logger = null) {
   // 3. Final backup: Waifu.pics SFW
   try {
     const wEndpoint = waifuMap[action] || 'hug';
-    const waifuUrl = `[https://api.waifu.pics/sfw/$](https://api.waifu.pics/sfw/$){wEndpoint}`;
+    const waifuUrl = makeUrl('api.waifu.pics', `/sfw/${wEndpoint}`);
     const t0 = performance.now();
     logger?.log('HTTP:REQ', `Tier 3 [Waifu.pics] GET ${waifuUrl}`, { timeoutMs: 5000 });
     const wRes = await fetch(waifuUrl, {
@@ -319,7 +323,7 @@ async function fetchActionGif(action, vibe = 'furry', logger = null) {
 async function fetchFurrySpecies(species = 'neko', logger = null) {
   logger?.log('SPECIES:INIT', `Fetching SFW furry species media for species="${species}"`);
   try {
-    const gifUrl = `[https://api.purrbot.site/v2/img/sfw/$](https://api.purrbot.site/v2/img/sfw/$){species}/gif`;
+    const gifUrl = makeUrl('api.purrbot.site', `/v2/img/sfw/${species}/gif`);
     const t0 = performance.now();
     logger?.log('HTTP:REQ', `Tier 1a [PurrBot GIF] GET ${gifUrl}`, { timeoutMs: 5000 });
     const res = await fetch(gifUrl, {
@@ -335,7 +339,7 @@ async function fetchFurrySpecies(species = 'neko', logger = null) {
       }
     }
 
-    const imgUrl = `[https://api.purrbot.site/v2/img/sfw/$](https://api.purrbot.site/v2/img/sfw/$){species}/img`;
+    const imgUrl = makeUrl('api.purrbot.site', `/v2/img/sfw/${species}/img`);
     const t1 = performance.now();
     logger?.log('HTTP:REQ', `Tier 1b [PurrBot IMG] GET ${imgUrl}`, { timeoutMs: 5000 });
     const imgRes = await fetch(imgUrl, {
@@ -358,7 +362,7 @@ async function fetchFurrySpecies(species = 'neko', logger = null) {
 
   try {
     const fallbackEndpoint = ['kitsune', 'okami', 'holo'].includes(species) ? 'kitsune' : 'neko';
-    const nbUrl = `[https://nekos.best/api/v2/$](https://nekos.best/api/v2/$){fallbackEndpoint}`;
+    const nbUrl = makeUrl('nekos.best', `/api/v2/${fallbackEndpoint}`);
     const t0 = performance.now();
     logger?.log('HTTP:REQ', `Tier 2 [Nekos.best] GET ${nbUrl}`, { fallbackEndpoint, timeoutMs: 5000 });
     const nbRes = await fetch(nbUrl, {
@@ -419,8 +423,8 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
   }
 
   const endpoints = [
-    { host: '[https://e621.net/posts.json](https://e621.net/posts.json)', tags: primaryTags },
-    { host: '[https://e926.net/posts.json](https://e926.net/posts.json)', tags: primaryTags }
+    { host: makeUrl('e621.net', '/posts.json'), tags: primaryTags },
+    { host: makeUrl('e926.net', '/posts.json'), tags: primaryTags }
   ];
 
   logger?.log('E621:INIT', `Prepared Booru search query`, {
@@ -474,7 +478,7 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
           const directUrl =
             p?.file?.url ||
             (md5 && ext
-              ? `[https://static1.e621.net/data/$](https://static1.e621.net/data/$){md5.slice(0, 2)}/${md5.slice(2, 4)}/${md5}.${ext}`
+              ? makeUrl('static1.e621.net', `/data/${md5.slice(0, 2)}/${md5.slice(2, 4)}/${md5}.${ext}`)
               : null);
           const displayUrl =
             ext === 'gif' ? directUrl : (p?.file?.size > 8_000_000 && p?.sample?.url ? p.sample.url : directUrl);
@@ -626,7 +630,7 @@ function buildAssetButtons(avatarUrl, bannerUrl, decoUrl, profileUserId = null, 
       new ButtonBuilder()
         .setLabel('Profile :3')
         .setStyle(ButtonStyle.Link)
-        .setURL(`[https://discord.com/users/$](https://discord.com/users/$){profileUserId}`)
+        .setURL(makeUrl('discord.com', `/users/${profileUserId}`))
     );
   }
   logger?.log('COMPONENT:ASSET_BTNS', `Built asset link buttons`, {
@@ -1259,7 +1263,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
       new ButtonBuilder()
         .setLabel("Loomie's Profile :3")
         .setStyle(ButtonStyle.Link)
-        .setURL(`[https://discord.com/users/$](https://discord.com/users/$){OWNER_ID}`),
+        .setURL(makeUrl('discord.com', `/users/${OWNER_ID}`)),
       new ButtonBuilder()
         .setLabel('emolarp.fans ^w^')
         .setStyle(ButtonStyle.Link)
