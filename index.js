@@ -8,7 +8,9 @@ import {
   WebhookClient,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle
+  ButtonStyle,
+  ApplicationIntegrationType,
+  InteractionContextType
 } from 'discord.js';
 import http from 'node:http';
 import 'dotenv/config';
@@ -231,7 +233,7 @@ function buildSnapshot(user, lanyard = null) {
   };
 }
 
-// 1. Live Status, Custom Status & Game/Spotify Logger (mood-matched kaomojis!)
+// 1. Live Status, Custom Status & Game/Spotify Logger
 client.on(Events.PresenceUpdate, async (oldPresence, newPresence) => {
   const member = newPresence.member;
   if (!member || member.user.bot) return;
@@ -454,6 +456,21 @@ async function checkWebsiteUptime() {
   }
 }
 
+// Helper to enable all commands in Servers, Bot DMs, and Private/Group DMs!
+function enableEverywhere(builder) {
+  return builder
+    .setIntegrationTypes(
+      ApplicationIntegrationType.GuildInstall,
+      ApplicationIntegrationType.UserInstall
+    )
+    .setContexts(
+      InteractionContextType.Guild,
+      InteractionContextType.BotDM,
+      InteractionContextType.PrivateChannel
+    )
+    .toJSON();
+}
+
 const addVibeOption = (opt) =>
   opt
     .setName('vibe')
@@ -464,80 +481,90 @@ const addVibeOption = (opt) =>
       { name: 'Kemonomimi / Anime (Nekos.best) ^w^', value: 'anime' }
     );
 
-// 6. Register All Slash Commands
+// 6. Register All Slash Commands (Enabled in DMs + Servers!)
 client.once(Events.ClientReady, async () => {
   console.log(`furry online as ${client.user.tag} :3`);
   client.user.setActivity('paws & thigh-highs :3', { type: 3 });
 
   const commands = [
-    new SlashCommandBuilder()
-      .setName('lookup')
-      .setDescription('Log any user PFP, banner, decoration & status (mutual server or Lanyard) :3')
-      .addStringOption((opt) =>
-        opt.setName('user_id').setDescription('Discord User ID or @mention').setRequired(true)
-      )
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('avatar')
-      .setDescription('Show a cutie HD PFP, banner & avatar decoration right in chat! uwu')
-      .addStringOption((opt) =>
-        opt.setName('user_id').setDescription('Discord User ID or @mention (defaults to you!)').setRequired(false)
-      )
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('track')
-      .setDescription('Add a User ID to monitor profile & Lanyard updates every 5 mins ^w^')
-      .addStringOption((opt) =>
-        opt.setName('user_id').setDescription('Discord User ID to watch').setRequired(true)
-      )
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('untrack')
-      .setDescription('Stop tracking an external User ID >_<')
-      .addStringOption((opt) =>
-        opt.setName('user_id').setDescription('Discord User ID to remove').setRequired(true)
-      )
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('tracked')
-      .setDescription('See all external User IDs furry is watching~ :3')
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('snuggle')
-      .setDescription('Wrap a cutie in cozy oversized-hoodie & thigh-high snuggles uwu!')
-      .addUserOption((opt) =>
-        opt.setName('cutie').setDescription('Who are we snuggling? :3').setRequired(true)
-      )
-      .addStringOption(addVibeOption)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('lick')
-      .setDescription('Give a cutie a playful catboy/puppy lick~ nya!')
-      .addUserOption((opt) =>
-        opt.setName('cutie').setDescription('Who gets a playful lick? >w<').setRequired(true)
-      )
-      .addStringOption(addVibeOption)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('kiss')
-      .setDescription('Give a cutie a sweet pastel forehead or cheek kiss~ ^w^')
-      .addUserOption((opt) =>
-        opt.setName('cutie').setDescription('Who gets a sweet kiss? :3').setRequired(true)
-      )
-      .addStringOption(addVibeOption)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('headpat')
-      .setDescription('Give a cutie cozy headpats and paw boops uwu!')
-      .addUserOption((opt) =>
-        opt.setName('cutie').setDescription('Who deserves headpats? :3').setRequired(true)
-      )
-      .addStringOption(addVibeOption)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('stats')
-      .setDescription('Check furry uptime, ping & tracked cuties! :3')
-      .toJSON()
+    enableEverywhere(
+      new SlashCommandBuilder()
+        .setName('lookup')
+        .setDescription('Log any user PFP, banner, decoration & status (mutual server or Lanyard) :3')
+        .addStringOption((opt) =>
+          opt.setName('user_id').setDescription('Discord User ID or @mention').setRequired(true)
+        )
+    ),
+    enableEverywhere(
+      new SlashCommandBuilder()
+        .setName('avatar')
+        .setDescription('Show a cutie HD PFP, banner & avatar decoration right in chat! uwu')
+        .addStringOption((opt) =>
+          opt.setName('user_id').setDescription('Discord User ID or @mention (defaults to you!)').setRequired(false)
+        )
+    ),
+    enableEverywhere(
+      new SlashCommandBuilder()
+        .setName('track')
+        .setDescription('Add a User ID to monitor profile & Lanyard updates every 5 mins ^w^')
+        .addStringOption((opt) =>
+          opt.setName('user_id').setDescription('Discord User ID to watch').setRequired(true)
+        )
+    ),
+    enableEverywhere(
+      new SlashCommandBuilder()
+        .setName('untrack')
+        .setDescription('Stop tracking an external User ID >_<')
+        .addStringOption((opt) =>
+          opt.setName('user_id').setDescription('Discord User ID to remove').setRequired(true)
+        )
+    ),
+    enableEverywhere(
+      new SlashCommandBuilder()
+        .setName('tracked')
+        .setDescription('See all external User IDs furry is watching~ :3')
+    ),
+    enableEverywhere(
+      new SlashCommandBuilder()
+        .setName('snuggle')
+        .setDescription('Wrap a cutie in cozy oversized-hoodie & thigh-high snuggles uwu!')
+        .addUserOption((opt) =>
+          opt.setName('cutie').setDescription('Who are we snuggling? :3').setRequired(true)
+        )
+        .addStringOption(addVibeOption)
+    ),
+    enableEverywhere(
+      new SlashCommandBuilder()
+        .setName('lick')
+        .setDescription('Give a cutie a playful catboy/puppy lick~ nya!')
+        .addUserOption((opt) =>
+          opt.setName('cutie').setDescription('Who gets a playful lick? >w<').setRequired(true)
+        )
+        .addStringOption(addVibeOption)
+    ),
+    enableEverywhere(
+      new SlashCommandBuilder()
+        .setName('kiss')
+        .setDescription('Give a cutie a sweet pastel forehead or cheek kiss~ ^w^')
+        .addUserOption((opt) =>
+          opt.setName('cutie').setDescription('Who gets a sweet kiss? :3').setRequired(true)
+        )
+        .addStringOption(addVibeOption)
+    ),
+    enableEverywhere(
+      new SlashCommandBuilder()
+        .setName('headpat')
+        .setDescription('Give a cutie cozy headpats and paw boops uwu!')
+        .addUserOption((opt) =>
+          opt.setName('cutie').setDescription('Who deserves headpats? :3').setRequired(true)
+        )
+        .addStringOption(addVibeOption)
+    ),
+    enableEverywhere(
+      new SlashCommandBuilder()
+        .setName('stats')
+        .setDescription('Check furry uptime, ping & tracked cuties! :3')
+    )
   ];
 
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
