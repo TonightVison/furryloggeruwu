@@ -404,7 +404,7 @@ async function fetchFurrySpecies(species = 'neko', logger = null) {
   return null;
 }
 
-// Fetch media from e621.net (supports both { posts: [...] } and top-level [...] array responses!)
+// Fetch media from e621.net (extracts file/sample/preview URLs + MD5 fallback + Danbooru backup)
 async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
   const cleanedUserTags = rawTags
     .split(/[\s,]+/)
@@ -427,7 +427,7 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
   const e621Key = (process.env.E621_API_KEY || 'q8iuHtnR1XvvWaYKyVB55hyk').trim();
 
   const baseHeaders = {
-    'User-Agent': `FurryDiscordBot/5.6 (by ${e621User} on e621)`,
+    'User-Agent': `FurryDiscordBot/5.7 (by ${e621User} on e621)`,
     'Accept': 'application/json'
   };
 
@@ -446,6 +446,38 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
     userAgent: baseHeaders['User-Agent']
   });
 
+  // Helper to extract any usable image/GIF URL from a post object
+  function extractMediaFromPost(p) {
+    const ext = (p?.file?.ext || p?.file_ext || '').toLowerCase();
+    const md5 = p?.file?.md5 || p?.md5;
+    const reconstructed =
+      md5 && ext && allowedExts.includes(ext)
+        ? makeUrl('static1.e621.net', `/data/${md5.slice(0, 2)}/${md5.slice(2, 4)}/${md5}.${ext}`)
+        : null;
+
+    const candidates = [
+      ext === 'gif' ? p?.file?.url : null,
+      (p?.file?.size > 8_000_000 ? p?.sample?.url : null),
+      p?.file?.url,
+      p?.sample?.url,
+      p?.preview?.url,
+      p?.file_url,
+      p?.large_file_url,
+      reconstructed
+    ].filter((u) => typeof u === 'string' && u.startsWith('http'));
+
+    const chosenUrl = candidates[0] || null;
+    const inferredExt =
+      ext ||
+      (chosenUrl ? chosenUrl.split('?')[0].split('.').pop()?.toLowerCase() : '');
+
+    return {
+      post: p,
+      ext: inferredExt,
+      displayUrl: chosenUrl
+    };
+  }
+
   const e621Attempts = [
     { label: 'e621.net (auth)', host: makeUrl('e621.net', '/posts.json'), tags: apiTags, headers: authHeaders },
     { label: 'e621.net (public)', host: makeUrl('e621.net', '/posts.json'), tags: apiTags, headers: baseHeaders }
@@ -453,8 +485,8 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
 
   for (let i = 0; i < e621Attempts.length; i++) {
     if (i > 0) {
-      logger?.log('RATE_LIMIT:WAIT', `Waiting 1100ms before Attempt #${i + 1}`);
-      await sleep(1100);
+      logger?.log('RATE_LIMIT:WAIT', `Waiting 1200ms before Attempt #${i + 1}`);
+      await sleep(1200);
     }
 
     const { label, host, tags, headers } = e621Attempts[i];
@@ -489,33 +521,25 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
         continue;
       }
 
-      // Support BOTH { posts: [...] } and top-level [...] arrays!
       const postsList = Array.isArray(data) ? data : (Array.isArray(data?.posts) ? data.posts : []);
       const rawCount = postsList.length;
 
       const validPosts = postsList
-        .map((p) => {
-          const ext = (p?.file?.ext || p?.file_ext || '').toLowerCase();
-          const md5 = p?.file?.md5 || p?.md5;
-          const directUrl =
-            p?.file?.url ||
-            p?.file_url ||
-            (md5 && ext
-              ? makeUrl('static1.e621.net', `/data/${md5.slice(0, 2)}/${md5.slice(2, 4)}/${md5}.${ext}`)
-              : null);
-          const displayUrl =
-            ext === 'gif'
-              ? directUrl
-              : ((p?.file?.size > 8_000_000 && p?.sample?.url) ? p.sample.url : directUrl);
-          return { post: p, ext, displayUrl };
-        })
+        .map(extractMediaFromPost)
         .filter((item) => item.displayUrl && allowedExts.includes(item.ext));
 
       logger?.log('E621:FILTER', `Filtered e621 posts`, {
         label,
-        isTopLevelArray: Array.isArray(data),
         rawPostCount: rawCount,
-        validPostCount: validPosts.length
+        validPostCount: validPosts.length,
+        sampleFirstPost: postsList[0]
+          ? {
+              id: postsList[0].id,
+              file: postsList[0].file,
+              sample: postsList[0].sample ? { hasUrl: Boolean(postsList[0].sample.url) } : null,
+              preview: postsList[0].preview ? { hasUrl: Boolean(postsList[0].preview.url) } : null
+            }
+          : null
       });
 
       if (rawCount === 0) {
@@ -524,7 +548,7 @@ async function fetchE621Post(rawTags = '', order = 'newest', logger = null) {
       }
 
       if (validPosts.length === 0) {
-        logger?.explainIssue(`${label} found ${rawCount} posts, but none had a displayable image/GIF URL.`);
+        logger?.explainIssue(`${label} found ${rawCount} posts, but none had a displayable image/GIF URL (sample keys logged in trace).`);
         continue;
       }
 
