@@ -20,7 +20,7 @@ const client = new Client({
 
 // Loomie's User ID & Website
 const OWNER_ID = '1416390397881749514';
-const SITE_URL = '[https://emolarp.fans](https://emolarp.fans)';
+const SITE_URL = 'https://emolarp.fans';
 const OC_IMAGE_URL = (process.env.OC_IMAGE_URL || '').trim();
 
 // In-memory affection counter
@@ -68,19 +68,17 @@ class VerboseLogger {
       }
       line += ` | ${serialized}`;
     }
-    // Prevent code-block breakout in Discord
-    line = line.replace(/```/g, "'''");
     this.entries.push(line);
     console.log(line);
   }
 
-  format(maxLength = 1650) {
+  format(maxLength = 1750) {
     const full = this.entries.join('\n');
     if (full.length <= maxLength) return full;
     const headLen = Math.floor(maxLength * 0.45);
     const tailLen = Math.floor(maxLength * 0.45);
     const omitted = full.length - (headLen + tailLen);
-    return `${full.slice(0, headLen)}\n... [${omitted} chars omitted] ...\n${full.slice(full.length - tailLen)}`;
+    return `${full.slice(0, headLen)}\n... [${omitted} chars omitted to fit Discord payload limit] ...\n${full.slice(full.length - tailLen)}`;
   }
 }
 
@@ -120,6 +118,7 @@ const PASTEL_LAVENDER = 0xe0b0ff;
 
 // Reliable GIF fetcher with 3-tier fallback (PurrBot Furry -> Nekos.best -> Waifu.pics SFW)
 async function fetchActionGif(action, vibe = 'furry', logger = null) {
+  // Verified PurrBot SFW GIF endpoints
   const purrMap = {
     snuggle: 'cuddle',
     hug: 'hug',
@@ -137,6 +136,7 @@ async function fetchActionGif(action, vibe = 'furry', logger = null) {
     howl: 'okami'
   };
 
+  // Verified Nekos.best SFW GIF endpoints
   const nekosMap = {
     snuggle: 'cuddle',
     hug: 'hug',
@@ -154,6 +154,7 @@ async function fetchActionGif(action, vibe = 'furry', logger = null) {
     howl: 'kitsune'
   };
 
+  // Verified Waifu.pics SFW endpoints as final backup
   const waifuMap = {
     snuggle: 'cuddle',
     hug: 'hug',
@@ -189,7 +190,8 @@ async function fetchActionGif(action, vibe = 'furry', logger = null) {
       const latencyMs = (performance.now() - t0).toFixed(2);
       logger?.log('HTTP:RES', `Tier 1 [PurrBot] responded HTTP ${purrRes.status} in ${latencyMs}ms`, {
         ok: purrRes.ok,
-        status: purrRes.status
+        status: purrRes.status,
+        statusText: purrRes.statusText
       });
       if (purrRes.ok) {
         const purrData = await purrRes.json();
@@ -308,6 +310,7 @@ async function fetchFurrySpecies(species = 'neko', logger = null) {
     logger?.log('HTTP:ERR', `Tier 1 [PurrBot] error, falling back to Nekos.best`, { error: err?.message || String(err) });
   }
 
+  // Fallback to Nekos.best
   try {
     const fallbackEndpoint = ['kitsune', 'okami', 'holo'].includes(species) ? 'kitsune' : 'neko';
     const nbUrl = `https://nekos.best/api/v2/${fallbackEndpoint}`;
@@ -331,7 +334,7 @@ async function fetchFurrySpecies(species = 'neko', logger = null) {
   return null;
 }
 
-// Fetch media from e621.net Booru API with specified tags
+// Fetch SFW & NSFW media from e621.net Booru API with specified tags
 async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
   const tagAliases = {
     sfw: 'rating:s',
@@ -349,6 +352,7 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
 
   const allowedExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
 
+  // Build candidate tag queries: try requested order first, then fallback without order:random if e621 throttles (429)
   const primaryTags = [...cleanedUserTags];
   if (order === 'random') primaryTags.push('order:random');
   else if (order === 'score') primaryTags.push('order:score');
@@ -375,13 +379,14 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
 
     logger?.log('HTTP:REQ', `e621 attempt #${i + 1}/${attempts.length} GET ${url}`, {
       tagsList,
-      timeoutMs: 8000
+      timeoutMs: 8000,
+      userAgent: 'furry-discord-bot/4.6 (by Loomie on GitHub)'
     });
 
     try {
       const res = await fetch(url, {
         headers: {
-          'User-Agent': 'furry-discord-bot/4.7 (by Loomie on GitHub)',
+          'User-Agent': 'furry-discord-bot/4.6 (by Loomie on GitHub)',
           'Accept': 'application/json'
         },
         signal: AbortSignal.timeout(8000)
@@ -389,7 +394,8 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
       const latencyMs = (performance.now() - t0).toFixed(2);
       logger?.log('HTTP:RES', `e621 attempt #${i + 1} HTTP ${res.status} in ${latencyMs}ms`, {
         ok: res.ok,
-        status: res.status
+        status: res.status,
+        statusText: res.statusText
       });
 
       if (res.status === 429 || res.status >= 500) {
@@ -447,6 +453,7 @@ async function fetchE621Post(rawTags = '', order = 'random', logger = null) {
         poolLimit,
         id: result.id,
         ext: picked.ext,
+        fileSize: chosen.file?.size || null,
         rating: chosen.rating || null,
         score: result.score,
         artists: result.artists,
@@ -604,7 +611,7 @@ client.once(Events.ClientReady, async () => {
         .addStringOption((opt) =>
           opt
             .setName('tags')
-            .setDescription('Space-separated booru tags (e.g. "deer kemonomimi") :3')
+            .setDescription('Space-separated booru tags (e.g. "deer kemonomimi", "fox cuddle") :3')
             .setRequired(false)
         )
         .addStringOption((opt) =>
@@ -817,23 +824,23 @@ client.once(Events.ClientReady, async () => {
     makeEverywhere(
       new SlashCommandBuilder()
         .setName('log')
-        .setDescription('Run any bot command with arguments and print verbose execution logs! :3')
+        .setDescription('Run any bot command with arguments and print extremely verbose logs into the output! :3')
         .addStringOption((opt) =>
           opt
             .setName('command')
-            .setDescription('Command & args to run (e.g. "e621 deer", "hug @user", "stats") :3')
+            .setDescription('Command and arguments to run (e.g. "e621 deer", "hug @cutie", "ship @u1 @u2", "stats") :3')
             .setRequired(true)
         )
         .addStringOption((opt) =>
           opt
             .setName('args')
-            .setDescription('Extra arguments (tags, question, @user, species, vibe) :3')
+            .setDescription('Optional arguments for the command (tags, question, @user, species, vibe, etc.) :3')
             .setRequired(false)
         )
         .addUserOption((opt) =>
           opt
             .setName('cutie')
-            .setDescription('Target cutie for actions, cutemeter, lovecount, or ship! :3')
+            .setDescription('Target cutie for affection, reaction, cutemeter, lovecount, or ship! :3')
             .setRequired(false)
         )
         .addUserOption((opt) =>
@@ -846,13 +853,13 @@ client.once(Events.ClientReady, async () => {
         .addStringOption((opt) =>
           opt
             .setName('tags')
-            .setDescription('Space-separated booru tags for /e621 :3')
+            .setDescription('Space-separated booru tags for /e621 (e.g. "deer kemonomimi") :3')
             .setRequired(false)
         )
         .addStringOption((opt) =>
           opt
             .setName('order')
-            .setDescription('Sort order for /e621 results ^w^')
+            .setDescription('How to sort /e621 results! ^w^')
             .setRequired(false)
             .addChoices(
               { name: 'Random :3', value: 'random' },
@@ -863,7 +870,7 @@ client.once(Events.ClientReady, async () => {
         .addStringOption((opt) =>
           opt
             .setName('species')
-            .setDescription('Species for /furrypic ^w^')
+            .setDescription('Pick a fluffy species for /furrypic! ^w^')
             .setRequired(false)
             .addChoices(
               { name: 'Neko / Catboy :3', value: 'neko' },
@@ -876,25 +883,20 @@ client.once(Events.ClientReady, async () => {
         .addStringOption((opt) =>
           opt
             .setName('question')
-            .setDescription('Yes/no question for /8ball :3')
+            .setDescription('What yes/no question do you want to ask /8ball? :3')
             .setRequired(false)
         )
         .addStringOption((opt) =>
           opt
             .setName('user_id')
-            .setDescription('Discord User ID or @mention for /avatar :3')
+            .setDescription('Discord User ID or @mention for /avatar! :3')
             .setRequired(false)
         )
     )
   ];
 
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-  try {
-    await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-    console.log(`Registered ${commands.length} global slash commands successfully! :3`);
-  } catch (err) {
-    console.error('Failed to register slash commands:', err);
-  }
+  await rest.put(Routes.applicationCommands(client.user.id), { body: commands }).catch(console.error);
 });
 
 const TARGET_ACTIONS = ['snuggle', 'hug', 'lick', 'kiss', 'headpat', 'earscratch', 'boop', 'bite', 'milk', 'bonk'];
@@ -979,6 +981,7 @@ async function parseLogCommandInput(interaction, logger) {
   const combinedTokens = `${rawCommandOption} ${rawArgsOption}`.trim().split(/\s+/).filter(Boolean);
   let targetCommand = (combinedTokens.shift() || '').replace(/^\/+/, '').toLowerCase();
 
+  // Unwrap accidental nested "/log <cmd>" invocations
   while (targetCommand === 'log' && combinedTokens.length > 0) {
     targetCommand = combinedTokens.shift().replace(/^\/+/, '').toLowerCase();
     logger.log('PARSER:UNWRAP', `Unwrapped nested /log prefix -> targetCommand="${targetCommand}"`);
@@ -986,6 +989,7 @@ async function parseLogCommandInput(interaction, logger) {
 
   let remainder = combinedTokens.join(' ').trim();
 
+  // Extract inline key:value or key=value pairs (e.g. order:score, vibe:anime, species:kitsune, user_id:123)
   const inlineKv = {};
   remainder = remainder
     .replace(/\b(order|vibe|species|user_id|cutie|cutie2)[:=]([^\s]+)/gi, (_, k, v) => {
@@ -994,12 +998,14 @@ async function parseLogCommandInput(interaction, logger) {
     })
     .trim();
 
+  // Check for inline tags:... or question:... which may span the rest of the string
   const inlineMultiMatch = remainder.match(/\b(tags|question)[:=](.+)$/i);
   if (inlineMultiMatch) {
     inlineKv[inlineMultiMatch[1].toLowerCase()] = inlineMultiMatch[2].trim();
     remainder = remainder.slice(0, inlineMultiMatch.index).trim();
   }
 
+  // Extract user mentions (<@123> or <@!123>) or standalone Discord snowflake IDs
   const extractedUserIds = [];
   const mentionRegex = /<@!?(\d{15,21})>|\b(\d{17,20})\b/g;
   let m;
@@ -1015,6 +1021,7 @@ async function parseLogCommandInput(interaction, logger) {
     remainderWithoutMentions
   });
 
+  // Helper to resolve a user by ID
   async function resolveUserById(rawId, label) {
     const cleanId = rawId.replace(/[<@!>]/g, '').trim();
     if (!cleanId) return null;
@@ -1048,6 +1055,7 @@ async function parseLogCommandInput(interaction, logger) {
     cutie2 = await resolveUserById(extractedUserIds[1], 'positional_user_2');
   }
 
+  // Resolve vibe, species, order, tags, question, user_id
   let vibe = explicitOptions.vibe || inlineKv.vibe || null;
   let species = explicitOptions.species || inlineKv.species || null;
   let order = explicitOptions.order || inlineKv.order || null;
@@ -1125,6 +1133,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     invokerTag: interaction.user.tag
   });
 
+  // /e621 — Pull booru images/GIFs from e621.net with custom tags!
   if (commandName === 'e621') {
     const rawTags = params.tags || '';
     const order = params.order || 'random';
@@ -1141,6 +1150,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     return buildE621Response(post, rawTags, order, logger);
   }
 
+  // /furrypic — Random SFW furry / kemonomimi art & GIF card!
   if (commandName === 'furrypic') {
     const species = params.species || 'neko';
     const labelMap = {
@@ -1164,6 +1174,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     };
   }
 
+  // /oc — Loomie's Deer OC & Profile Card!
   if (commandName === 'oc') {
     const t0 = performance.now();
     logger?.log('CMD:OC', `Fetching owner profile OWNER_ID="${OWNER_ID}" (force=true)`);
@@ -1207,6 +1218,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     };
   }
 
+  // Target Action Commands + "Return Affection" Button + Small Website Link!
   if (TARGET_ACTIONS.includes(commandName)) {
     const action = commandName;
     let cutie = params.cutie;
@@ -1254,6 +1266,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     };
   }
 
+  // Solo / Optional-Target Reaction Commands (/blush, /tailwag, /purr, /howl)
   if (SOLO_ACTIONS.includes(commandName)) {
     const action = commandName;
     const cutie = params.cutie || null;
@@ -1307,6 +1320,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     };
   }
 
+  // /cutemeter
   if (commandName === 'cutemeter') {
     const cutie = params.cutie || interaction.user;
     const isOwner = cutie.id === OWNER_ID;
@@ -1338,6 +1352,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     };
   }
 
+  // /ship
   if (commandName === 'ship') {
     let c1 = params.cutie;
     let c2 = params.cutie2;
@@ -1384,6 +1399,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     };
   }
 
+  // /8ball
   if (commandName === '8ball') {
     let question = params.question;
     if (!question) {
@@ -1418,6 +1434,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     };
   }
 
+  // /lovecount
   if (commandName === 'lovecount') {
     let cutie = params.cutie;
     if (!cutie) {
@@ -1443,6 +1460,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     };
   }
 
+  // /avatar (with clickable Discord Profile link button + emolarp.fans!)
   if (commandName === 'avatar') {
     const rawInput = params.user_id || (params.cutie ? params.cutie.id : null);
     const rawId = rawInput ? rawInput.replace(/[<@!>]/g, '').trim() : interaction.user.id;
@@ -1493,6 +1511,7 @@ async function executeBotCommand(commandName, params, interaction, logger = null
     }
   }
 
+  // /stats
   if (commandName === 'stats') {
     const uptimeSec = Math.floor(process.uptime());
     const mins = Math.floor(uptimeSec / 60);
@@ -1535,155 +1554,153 @@ async function executeBotCommand(commandName, params, interaction, logger = null
 
 // Handle Slash Commands & Interactive Buttons
 client.on(Events.InteractionCreate, async (interaction) => {
-  try {
-    // Handle "Roll Again" button for /e621
-    if (interaction.isButton() && interaction.customId.startsWith('e621:')) {
-      const [, order, ...tagParts] = interaction.customId.split(':');
-      const rawTags = tagParts.join(':');
-      await interaction.deferReply();
+  // Handle "Roll Again" button for /e621
+  if (interaction.isButton() && interaction.customId.startsWith('e621:')) {
+    const [, order, ...tagParts] = interaction.customId.split(':');
+    const rawTags = tagParts.join(':');
+    await interaction.deferReply();
 
-      const post = await fetchE621Post(rawTags, order || 'random');
-      if (!post) {
-        return interaction.editReply(`Awr~ Couldn't find another e621 post for \`${rawTags || 'those tags'}\` right now! >_<`);
-      }
-      await interaction.editReply(buildE621Response(post, rawTags, order || 'random'));
-      return;
+    const post = await fetchE621Post(rawTags, order || 'random');
+    if (!post) {
+      return interaction.editReply(`Awr~ Couldn't find another e621 post for \`${rawTags || 'those tags'}\` right now! >_<`);
+    }
+    await interaction.editReply(buildE621Response(post, rawTags, order || 'random'));
+    return;
+  }
+
+  // Handle "Return the Affection" Button Clicks!
+  if (interaction.isButton() && interaction.customId.startsWith('back:')) {
+    const [, action, senderId, receiverId, vibe] = interaction.customId.split(':');
+
+    if (receiverId && interaction.user.id !== receiverId && interaction.user.id !== senderId) {
+      return interaction.reply({
+        content: `Awr~ That button is for <@${receiverId}> to hug/snuggle back, nya! ${pick('blush')}`,
+        ephemeral: true
+      });
     }
 
-    // Handle "Return the Affection" Button Clicks!
-    if (interaction.isButton() && interaction.customId.startsWith('back:')) {
-      const [, action, senderId, receiverId, vibe] = interaction.customId.split(':');
+    await interaction.deferReply();
 
-      if (receiverId && interaction.user.id !== receiverId && interaction.user.id !== senderId) {
-        return interaction.reply({
-          content: `Awr~ That button is for <@${receiverId}> to hug/snuggle back, nya! ${pick('blush')}`,
-          ephemeral: true
-        });
-      }
+    const gif = await fetchActionGif(action, vibe || 'furry');
+    const count = recordAffection(interaction.user.id, senderId);
+    const chosen = buildActionCopy(action, interaction.user.id, senderId);
+    const targetUser = await client.users.fetch(senderId).catch(() => null);
 
-      await interaction.deferReply();
-
-      const gif = await fetchActionGif(action, vibe || 'furry');
-      const count = recordAffection(interaction.user.id, senderId);
-      const chosen = buildActionCopy(action, interaction.user.id, senderId);
-      const targetUser = await client.users.fetch(senderId).catch(() => null);
-
-      await interaction.editReply({
-        embeds: [{
-          title: `${chosen.title} (Returned!)`,
-          description: `${chosen.text}\n\n*Affection combo with <@${senderId}>: **${count}** time${count === 1 ? '' : 's'}! ^w^* • [emolarp.fans](${SITE_URL})`,
-          color: PASTEL_PURPLE,
-          thumbnail: targetUser ? { url: targetUser.displayAvatarURL({ size: 256 }) } : undefined,
-          image: gif?.url ? { url: gif.url } : undefined,
-          footer: {
-            text: gif?.source
-              ? `${gif.source} • paws & thigh-highs certified :3`
-              : 'paws & thigh-highs certified uwu :3'
-          }
-        }]
-      });
-      return;
-    }
-
-    if (!interaction.isChatInputCommand()) return;
-
-    // /log — Run any command and its arguments while printing verbose logs cleanly!
-    if (interaction.commandName === 'log') {
-      const deferStart = performance.now();
-      await interaction.deferReply();
-
-      const logger = new VerboseLogger(true);
-      const memStart = process.memoryUsage();
-
-      logger.log('INIT', `Initialized verbose logger for /log`, {
-        interactionId: interaction.id,
-        user: `${interaction.user.tag} (${interaction.user.id})`,
-        guildId: interaction.guildId || 'DM',
-        deferMs: (performance.now() - deferStart).toFixed(2)
-      });
-
-      logger.log('RUNTIME', `Process & Gateway telemetry snapshot`, {
-        nodeVersion: process.version,
-        uptimeSec: Math.floor(process.uptime()),
-        wsPingMs: client.ws.ping,
-        rssMB: (memStart.rss / 1048576).toFixed(2),
-        heapUsedMB: (memStart.heapUsed / 1048576).toFixed(2)
-      });
-
-      const { targetCommand, params } = await parseLogCommandInput(interaction, logger);
-      const resultPayload = await executeBotCommand(targetCommand, params, interaction, logger);
-
-      const memEnd = process.memoryUsage();
-      const totalMs = (performance.now() - logger.startTime).toFixed(2);
-      logger.log('PAYLOAD:READY', `Command "/${targetCommand}" produced output payload`, {
-        hasContent: Boolean(resultPayload.content),
-        embedCount: resultPayload.embeds?.length || 0,
-        componentRows: resultPayload.components?.length || 0
-      });
-      logger.log('COMPLETE', `Finished /${targetCommand} execution in ${totalMs}ms`, {
-        totalDurationMs: Number(totalMs),
-        totalLogEntries: logger.entries.length + 1,
-        heapUsedMB: (memEnd.heapUsed / 1048576).toFixed(2)
-      });
-
-      // Safely build content <= 2000 chars and embed <= 4096 chars
-      const baseContent = resultPayload.content ? `${resultPayload.content}\n\n` : '';
-      const header = `**📋 Verbose Execution Log (\`/${targetCommand}\` • \`${totalMs}ms\` • \`${logger.entries.length} events\`)**`;
-      const maxLogChars = Math.max(300, 1920 - baseContent.length - header.length - 16);
-      const formattedLog = logger.format(maxLogChars);
-      const contentWithLogs = `${baseContent}${header}\n\`\`\`log\n${formattedLog}\n\`\`\``.slice(0, 2000);
-
-      const finalPayload = {
-        ...resultPayload,
-        content: contentWithLogs
-      };
-      delete finalPayload.ephemeral;
-
-      // Ensure embed description stays strictly within Discord's 4096-char limit
-      if (finalPayload.embeds?.length > 0) {
-        const mainEmbed = { ...finalPayload.embeds[0] };
-        if (mainEmbed.description && mainEmbed.description.length > 4000) {
-          mainEmbed.description = mainEmbed.description.slice(0, 4000) + '...';
+    await interaction.editReply({
+      embeds: [{
+        title: `${chosen.title} (Returned!)`,
+        description: `${chosen.text}\n\n*Affection combo with <@${senderId}>: **${count}** time${count === 1 ? '' : 's'}! ^w^* • [emolarp.fans](${SITE_URL})`,
+        color: PASTEL_PURPLE,
+        thumbnail: targetUser ? { url: targetUser.displayAvatarURL({ size: 256 }) } : undefined,
+        image: gif?.url ? { url: gif.url } : undefined,
+        footer: {
+          text: gif?.source
+            ? `${gif.source} • paws & thigh-highs certified :3`
+            : 'paws & thigh-highs certified uwu :3'
         }
-        finalPayload.embeds = [mainEmbed, ...finalPayload.embeds.slice(1)];
-      }
+      }]
+    });
+    return;
+  }
 
-      await interaction.editReply(finalPayload);
-      return;
-    }
+  if (!interaction.isChatInputCommand()) return;
 
-    // Standard direct command execution
-    const deferredCommands = ['e621', 'furrypic', 'oc', ...TARGET_ACTIONS, ...SOLO_ACTIONS, 'avatar'];
-    const needsDefer = deferredCommands.includes(interaction.commandName);
-    if (needsDefer) {
-      await interaction.deferReply();
-    }
+  // /log — Run any command and its arguments while printing extremely verbose logs into the main command output!
+  if (interaction.commandName === 'log') {
+    const logger = new VerboseLogger(true);
+    const memStart = process.memoryUsage();
 
-    const directParams = {
-      cutie: interaction.options.getUser('cutie') || interaction.options.getUser('cutie1') || null,
-      cutie2: interaction.options.getUser('cutie2') || null,
-      vibe: interaction.options.getString('vibe') || 'furry',
-      tags: interaction.options.getString('tags') || '',
-      order: interaction.options.getString('order') || 'random',
-      species: interaction.options.getString('species') || 'neko',
-      question: interaction.options.getString('question') || null,
-      user_id: interaction.options.getString('user_id') || null
+    logger.log('INIT', `Initialized extremely verbose execution logger for /log`, {
+      interactionId: interaction.id,
+      user: `${interaction.user.tag} (${interaction.user.id})`,
+      guildId: interaction.guildId || 'DM',
+      channelId: interaction.channelId,
+      locale: interaction.locale
+    });
+
+    logger.log('RUNTIME', `Process & Gateway telemetry snapshot`, {
+      nodeVersion: process.version,
+      platform: `${process.platform}/${process.arch}`,
+      pid: process.pid,
+      uptimeSec: Math.floor(process.uptime()),
+      wsPingMs: client.ws.ping,
+      rssMB: (memStart.rss / 1048576).toFixed(2),
+      heapUsedMB: (memStart.heapUsed / 1048576).toFixed(2)
+    });
+
+    const deferStart = performance.now();
+    await interaction.deferReply();
+    logger.log('DISCORD:DEFER', `Deferred interaction reply in ${(performance.now() - deferStart).toFixed(2)}ms`);
+
+    const { targetCommand, params } = await parseLogCommandInput(interaction, logger);
+    const resultPayload = await executeBotCommand(targetCommand, params, interaction, logger);
+
+    const memEnd = process.memoryUsage();
+    const totalMs = (performance.now() - logger.startTime).toFixed(2);
+    logger.log('PAYLOAD:READY', `Command "/${targetCommand}" produced output payload`, {
+      hasContent: Boolean(resultPayload.content),
+      embedCount: resultPayload.embeds?.length || 0,
+      componentRows: resultPayload.components?.length || 0,
+      originalEphemeral: Boolean(resultPayload.ephemeral)
+    });
+    logger.log('COMPLETE', `Finished /${targetCommand} execution in ${totalMs}ms`, {
+      totalDurationMs: Number(totalMs),
+      totalLogEntries: logger.entries.length + 1,
+      heapUsedMB: (memEnd.heapUsed / 1048576).toFixed(2),
+      heapDeltaKB: ((memEnd.heapUsed - memStart.heapUsed) / 1024).toFixed(2)
+    });
+
+    // Build main command output with extremely verbose logs printed directly into the output
+    const baseContent = resultPayload.content ? `${resultPayload.content}\n\n` : '';
+    const header = `**📋 Extremely Verbose Execution Log (\`/${targetCommand}\` • \`${totalMs}ms\` • \`${logger.entries.length} events\`)**`;
+    const maxLogCharsForContent = Math.max(400, 1950 - baseContent.length - header.length - 16);
+    const formattedLogForContent = logger.format(maxLogCharsForContent);
+    const contentWithLogs = `${baseContent}${header}\n\`\`\`log\n${formattedLogForContent}\n\`\`\``;
+
+    const finalPayload = {
+      ...resultPayload,
+      content: contentWithLogs
     };
+    delete finalPayload.ephemeral;
 
-    const payload = await executeBotCommand(interaction.commandName, directParams, interaction, null);
-    if (needsDefer) {
-      await interaction.editReply(payload);
-    } else {
-      await interaction.reply(payload);
+    // Also attach the verbose log trace inside the main embed description if an embed is present
+    if (finalPayload.embeds?.length > 0) {
+      const mainEmbed = { ...finalPayload.embeds[0] };
+      const origDesc = mainEmbed.description || '';
+      const embedLogSectionHeader = `\n\n**📋 Verbose Execution Trace (\`/${targetCommand}\`):**\n`;
+      const maxLogCharsForEmbed = Math.max(400, 3900 - origDesc.length - embedLogSectionHeader.length - 16);
+      const formattedLogForEmbed = logger.format(maxLogCharsForEmbed);
+      mainEmbed.description = `${origDesc}${embedLogSectionHeader}\`\`\`log\n${formattedLogForEmbed}\n\`\`\``;
+      finalPayload.embeds = [mainEmbed, ...finalPayload.embeds.slice(1)];
     }
-  } catch (err) {
-    console.error('Interaction handler error:', err);
-    const errMsg = `Awr~ Something went wrong running that command: \`${err?.message || String(err)}\` >_<`.slice(0, 1950);
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply({ content: errMsg }).catch(() => {});
-    } else {
-      await interaction.reply({ content: errMsg, ephemeral: true }).catch(() => {});
-    }
+
+    await interaction.editReply(finalPayload);
+    return;
+  }
+
+  // Standard direct command execution
+  const deferredCommands = ['e621', 'furrypic', 'oc', ...TARGET_ACTIONS, ...SOLO_ACTIONS, 'avatar'];
+  const needsDefer = deferredCommands.includes(interaction.commandName);
+  if (needsDefer) {
+    await interaction.deferReply();
+  }
+
+  const directParams = {
+    cutie: interaction.options.getUser('cutie') || interaction.options.getUser('cutie1') || null,
+    cutie2: interaction.options.getUser('cutie2') || null,
+    vibe: interaction.options.getString('vibe') || 'furry',
+    tags: interaction.options.getString('tags') || '',
+    order: interaction.options.getString('order') || 'random',
+    species: interaction.options.getString('species') || 'neko',
+    question: interaction.options.getString('question') || null,
+    user_id: interaction.options.getString('user_id') || null
+  };
+
+  const payload = await executeBotCommand(interaction.commandName, directParams, interaction, null);
+  if (needsDefer) {
+    await interaction.editReply(payload);
+  } else {
+    await interaction.reply(payload);
   }
 });
 
