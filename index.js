@@ -13,6 +13,8 @@ import {
   Partials
 } from 'discord.js';
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
 import 'dotenv/config';
 
 const client = new Client({
@@ -23,6 +25,30 @@ const client = new Client({
   ],
   partials: [Partials.Channel, Partials.Message]
 });
+
+// ==========================================
+// 📋 YOUR CUSTOM MEMES & 6-7 EDITS LIST
+// Paste ANY TikTok, Twitter (X), or video/GIF links here!
+// The bot automatically fixes them with vxtiktok/vxtwitter so Discord embeds them!
+// ==========================================
+const MEME_LINKS = [
+  'https://www.tiktok.com/t/ZTPpmjPGA/'
+  'https://www.tiktok.com/t/ZPNSgLAAA/'
+'https://www.tiktok.com/t/ZTPpmjPGA/'
+'https://www.tiktok.com/t/ZPNSgHcun/'
+'https://www.tiktok.com/t/ZPNSgWcqC/'
+'https://www.tiktok.com/t/ZPNSgajWw/'
+'https://www.tiktok.com/t/ZTPpmXkDF/'
+'https://www.tiktok.com/t/ZPNSgKS7o/'
+'https://www.tiktok.com/t/ZPNSprJRo/'
+'https://www.tiktok.com/t/ZPNSphy9y/'
+'https://www.tiktok.com/t/ZPNSp2qjP/'
+'https://www.tiktok.com/t/ZTPpmT4dH/'
+  
+  // Just paste new links below like this:
+  // 'https://x.com/username/status/1234567890',
+  // 'https://www.tiktok.com/@user/video/1234567890',
+];
 
 const OWNER_ID = '1416390397881749514';
 const SITE_URL = 'https://emolarp.fans';
@@ -57,14 +83,14 @@ const POPULAR_TAGS = [
   'order:rank', 'animated', 'video', 'high_res', 'digital_media_(artwork)'
 ];
 
-const SIX_SEVEN_QUOTES = [
+const MEME_CAPTIONS = [
   '"6-7! I just bipped right on the highway! 🚗💨"',
   '"DOOT DOOT 6-7!! 🔊🔥"',
   '*hits the 6-7 hand gesture with astronomical power* 🏀💥',
-  '"6-7 kid entered the chat... it\'s over for you all! 😤💯"',
-  '"When the 6-7 beat drops frame-perfect... 🎬⚡"',
-  '"LaMelo 6-7 energy activated! 🏀✨"',
-  '"Six-Seven on repeat 24/7! 🔥"'
+  '"Certified top-tier meme drop! 😤💯"',
+  '"When the beat drops frame-perfect... 🎬⚡"',
+  '"Peak brainrot energy unlocked! 💀🔥"',
+  '"Six-Seven on repeat 24/7! 🏀✨"'
 ];
 
 const KAOMOJI = {
@@ -88,6 +114,21 @@ function recordAffection(fromId, toId) {
   const next = (affectionCounts.get(key) || 0) + 1;
   affectionCounts.set(key, next);
   return next;
+}
+
+// Convert TikTok and Twitter/X links into playable video embed proxies
+function formatSocialEmbed(rawUrl) {
+  const trimmed = (rawUrl || '').trim();
+  if (trimmed.includes('tiktok.com')) {
+    return trimmed.replace(/(?:https?:\/\/)?(?:www\.)?tiktok\.com/, 'https://www.vxtiktok.com');
+  }
+  if (trimmed.includes('x.com')) {
+    return trimmed.replace(/(?:https?:\/\/)?(?:www\.)?x\.com/, 'https://vxtwitter.com');
+  }
+  if (trimmed.includes('twitter.com')) {
+    return trimmed.replace(/(?:https?:\/\/)?(?:www\.)?twitter\.com/, 'https://vxtwitter.com');
+  }
+  return trimmed;
 }
 
 const PURRBOT_MAP = {
@@ -157,6 +198,31 @@ async function fetchFurrySpecies(species = 'neko') {
   return 'https://cdn.purrbot.site/sfw/neko/gif/neko_029.gif';
 }
 
+function getLocalMemeMedia() {
+  const checkPaths = [
+    './67.mp4', './67.webm', './67.gif', './67.mov',
+    './edits/67.mp4', './edits/67.webm', './edits/67.gif'
+  ];
+
+  try {
+    if (fs.existsSync('./edits')) {
+      const files = fs.readdirSync('./edits').filter((f) => /\.(mp4|webm|gif|mov|png|jpg)$/i.test(f));
+      if (files.length > 0) {
+        const picked = files[Math.floor(Math.random() * files.length)];
+        return { filePath: path.join('./edits', picked), fileName: picked };
+      }
+    }
+  } catch {}
+
+  for (const p of checkPaths) {
+    if (fs.existsSync(p)) {
+      return { filePath: p, fileName: path.basename(p) };
+    }
+  }
+
+  return null;
+}
+
 function extractE621Media(p) {
   const post = p?.post || p;
   if (!post || typeof post !== 'object' || post.flags?.deleted) return null;
@@ -165,16 +231,18 @@ function extractE621Media(p) {
   const ext = (post.files?.meta?.ext || post.file?.ext || '').toLowerCase();
   if (!md5 || !ext) return null;
 
-  const sampleJpg = post.files?.sample?.jpg || post.sample?.url || null;
-  const originalUrl = post.files?.original?.url || post.file?.url || null;
   const cdn = 'https://static1.e621.net/data';
-  const sampleCdn = `${cdn}/sample/${md5.slice(0, 2)}/${md5.slice(2, 4)}/${md5}.jpg`;
   const directCdn = `${cdn}/${md5.slice(0, 2)}/${md5.slice(2, 4)}/${md5}.${ext}`;
   const isVideo = ['webm', 'mp4'].includes(ext);
 
+  const hasSample = Boolean(post.files?.sample?.has ?? post.sample?.has);
+  const sampleCdn = `${cdn}/sample/${md5.slice(0, 2)}/${md5.slice(2, 4)}/${md5}.jpg`;
+  const sampleUrl = post.files?.sample?.url || post.sample?.url || (hasSample ? sampleCdn : null);
+  const originalUrl = post.files?.original?.url || post.file?.url || null;
+
   return {
     post,
-    displayUrl: sampleJpg || sampleCdn || directCdn,
+    displayUrl: isVideo ? (sampleUrl || directCdn) : (sampleUrl || directCdn),
     videoUrl: isVideo ? (originalUrl || directCdn) : null,
     isVideo,
     ext
@@ -473,6 +541,7 @@ function getCommandDefinitions(forEverywhere = true) {
     new SlashCommandBuilder().setName('purr').setDescription('Curl up and purr softly!').addUserOption((o) => o.setName('cutie').setDescription('Optional: purr for who?').setRequired(false)),
     new SlashCommandBuilder().setName('howl').setDescription('Let out a cute wolf howl awooo~').addUserOption((o) => o.setName('cutie').setDescription('Optional: howl with who?').setRequired(false)),
 
+    new SlashCommandBuilder().setName('memes').setDescription('Drop a TikTok, Twitter (X), or 6-7 meme edit! 🔥').addUserOption((o) => o.setName('cutie').setDescription('Optional cutie to share with :3').setRequired(false)),
     new SlashCommandBuilder().setName('67').setDescription('Drop a legendary 6-7 edit! 🏀🔥').addUserOption((o) => o.setName('cutie').setDescription('Optional cutie to flex on :3').setRequired(false)),
 
     new SlashCommandBuilder().setName('cutemeter').setDescription('Scan cuteness percentage!').addUserOption((o) => o.setName('cutie').setDescription('Target').setRequired(false)),
@@ -599,28 +668,73 @@ async function executeBotCommand(commandName, params, interaction) {
     };
   }
 
-  if (commandName === '67') {
+  // Unified Memes & 6-7 Handler: supports TikTok, Twitter (X), MP4, and GIF links!
+  if (commandName === 'memes' || commandName === '67') {
     const cutie = params.cutie || null;
-    const pickedQuote = SIX_SEVEN_QUOTES[Math.floor(Math.random() * SIX_SEVEN_QUOTES.length)];
+    const pickedQuote = MEME_CAPTIONS[Math.floor(Math.random() * MEME_CAPTIONS.length)];
+    const localMedia = getLocalMemeMedia();
+
+    const titlePrefix = commandName === '67' ? 'SIX-SEVEN (6-7) EDIT DROPPED! 🏀🔥' : 'FRESH MEME DROP! 🔥🎬';
     const desc = cutie
-      ? `<@${interaction.user.id}> dropped a legendary **6-7** edit on <@${cutie.id}>!! 🏀🔥\n\n>>> **${pickedQuote}**\n\n[emolarp.fans](${SITE_URL}) :3`
-      : `<@${interaction.user.id}> dropped a legendary **6-7** edit!! 🏀🔥\n\n>>> **${pickedQuote}**\n\n[emolarp.fans](${SITE_URL}) :3`;
+      ? `<@${interaction.user.id}> dropped a meme on <@${cutie.id}>!! 🔥\n\n>>> **${pickedQuote}**\n\n[emolarp.fans](${SITE_URL}) :3`
+      : `<@${interaction.user.id}> dropped a fresh meme!! 🔥\n\n>>> **${pickedQuote}**\n\n[emolarp.fans](${SITE_URL}) :3`;
 
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('roll:67').setLabel('Roll Another 6-7 🔄').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setLabel('Watch 6-7 Edits 🎥').setStyle(ButtonStyle.Link).setURL('https://www.youtube.com/results?search_query=67+edit+meme')
-    );
+    const buttons = [
+      new ButtonBuilder().setCustomId(`roll:${commandName}`).setLabel('Roll Another 🔄').setStyle(ButtonStyle.Primary)
+    ];
 
+    // Priority 1: If there is a local file in GitHub (e.g. edits/67.mp4)
+    if (localMedia) {
+      const row = new ActionRowBuilder().addComponents(buttons);
+      const ext = path.extname(localMedia.fileName).toLowerCase();
+      const isImg = ['.gif', '.png', '.jpg', '.jpeg'].includes(ext);
+
+      const embed = {
+        title: titlePrefix,
+        description: desc,
+        color: NEON_ORANGE,
+        footer: { text: `emolarp.fans • Loomie's Bot :3` }
+      };
+      if (cutie?.displayAvatarURL) embed.thumbnail = { url: cutie.displayAvatarURL({ size: 256 }) };
+      if (isImg) embed.image = { url: `attachment://${localMedia.fileName}` };
+
+      return {
+        embeds: [embed],
+        files: [{ attachment: localMedia.filePath, name: localMedia.fileName }],
+        components: [row]
+      };
+    }
+
+    // Priority 2: Use links from MEME_LINKS (TikTok, Twitter/X, etc.)
+    const validLinks = MEME_LINKS.filter((l) => typeof l === 'string' && l.trim().startsWith('http'));
+    if (validLinks.length > 0) {
+      const rawLink = validLinks[Math.floor(Math.random() * validLinks.length)];
+      const embedUrl = formatSocialEmbed(rawLink);
+
+      buttons.push(new ButtonBuilder().setLabel('Original Link 📱').setStyle(ButtonStyle.Link).setURL(rawLink));
+      const row = new ActionRowBuilder().addComponents(buttons);
+
+      // Sending embedUrl in message content triggers Discord to play the TikTok/Twitter video inline!
+      return {
+        content: `**${titlePrefix}**\n${desc}\n\n${embedUrl}`,
+        components: [row]
+      };
+    }
+
+    // Priority 3: Fallback GIF if list is empty
     const embed = {
-      title: `SIX-SEVEN (6-7) EDIT DROPPED! 🏀🔥`,
+      title: titlePrefix,
       description: desc,
       color: NEON_ORANGE,
-      footer: { text: `6-7 Doot Doot • emolarp.fans • Loomie's Bot :3` }
+      image: { url: 'https://media1.giphy.com/media/v1.Y2lkPTc5MGI3NjExOHp1aHl6eG9hOHRxbWw1cmZ6cWR3dndhNWp2eHN3b3ZzOXA1bnF3ZyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3o7TKrEzt9MHDAi1iM/giphy.gif' },
+      footer: { text: `emolarp.fans • Loomie's Bot :3` }
     };
-    if (cutie?.displayAvatarURL) {
-      embed.thumbnail = { url: cutie.displayAvatarURL({ size: 256 }) };
-    }
-    return { embeds: [embed], components: [row] };
+    if (cutie?.displayAvatarURL) embed.thumbnail = { url: cutie.displayAvatarURL({ size: 256 }) };
+
+    return {
+      embeds: [embed],
+      components: [new ActionRowBuilder().addComponents(buttons)]
+    };
   }
 
   if (TARGET_ACTIONS.includes(commandName)) {
@@ -832,9 +946,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    if (interaction.isButton() && interaction.customId === 'roll:67') {
+    if (interaction.isButton() && (interaction.customId === 'roll:memes' || interaction.customId === 'roll:67')) {
       await interaction.deferUpdate();
-      const payload = await executeBotCommand('67', { cutie: null }, interaction);
+      const targetCmd = interaction.customId.split(':')[1] || 'memes';
+      const payload = await executeBotCommand(targetCmd, { cutie: null }, interaction);
       return interaction.editReply(payload);
     }
 
