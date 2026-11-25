@@ -32,8 +32,18 @@ const client = new Client({
 // You can also add hashtags/notes next to links (e.g. 'https://... #67 #skrilla')
 // ==========================================
 const MEME_LINKS = [
-  'https://www.tiktok.com/t/ZTPpmjPGA/ #67 #edit #skrilla'
-  // Paste more links below anytime:
+  'https://www.tiktok.com/t/ZPNSgLAAA/ #67 #edit #skrilla',
+  'https://www.tiktok.com/t/ZTPpmjPGA/ #67 #edit #skrilla',
+  'https://www.tiktok.com/t/ZPNSgHcun/ #67 #edit #skrilla',
+  'https://www.tiktok.com/t/ZPNSgWcqC/ #67 #edit #skrilla',
+  'https://www.tiktok.com/t/ZPNSgajWw/ #67 #edit #skrilla',
+  'https://www.tiktok.com/t/ZTPpmXkDF/ #67 #edit #skrilla',
+  'https://www.tiktok.com/t/ZPNSgKS7o/ #67 #edit #skrilla',
+  'https://www.tiktok.com/t/ZPNSprJRo/ #67 #edit #skrilla',
+  'https://www.tiktok.com/t/ZPNSphy9y/ #67 #edit #skrilla',
+  'https://www.tiktok.com/t/ZPNSp2qjP/ #67 #edit #skrilla',
+  'https://www.tiktok.com/t/ZTPpmT4dH/ #67 #edit #skrilla'
+  // Paste more TikTok, Twitter/X, or video links below anytime:
   // 'https://x.com/username/status/1234567890 #meme',
   // 'https://www.tiktok.com/@user/video/1234567890 #funny',
 ];
@@ -104,17 +114,17 @@ function recordAffection(fromId, toId) {
   return next;
 }
 
-// Convert TikTok and Twitter/X links into playable video embed proxies
+// Convert TikTok and Twitter/X links into playable video embed proxies (using active fxTikTok & fixupx)
 function formatSocialEmbed(rawUrl) {
   const trimmed = (rawUrl || '').split(/\s+/)[0];
   if (trimmed.includes('tiktok.com')) {
-    return trimmed.replace(/(?:https?:\/\/)?(?:www\.)?tiktok\.com/, 'https://www.vxtiktok.com');
+    return trimmed.replace(/(?:https?:\/\/)?(?:[a-zA-Z0-9_-]+\.)?tiktok\.com/, 'https://tnktok.com');
   }
   if (trimmed.includes('x.com')) {
-    return trimmed.replace(/(?:https?:\/\/)?(?:www\.)?x\.com/, 'https://vxtwitter.com');
+    return trimmed.replace(/(?:https?:\/\/)?(?:[a-zA-Z0-9_-]+\.)?x\.com/, 'https://fixupx.com');
   }
   if (trimmed.includes('twitter.com')) {
-    return trimmed.replace(/(?:https?:\/\/)?(?:www\.)?twitter\.com/, 'https://vxtwitter.com');
+    return trimmed.replace(/(?:https?:\/\/)?(?:[a-zA-Z0-9_-]+\.)?twitter\.com/, 'https://fxtwitter.com');
   }
   return trimmed;
 }
@@ -139,7 +149,7 @@ async function searchTikTokFree(keywords) {
 
     if (videoId) {
       return {
-        url: `https://www.vxtiktok.com/@${username}/video/${videoId}`,
+        url: `https://tnktok.com/@${username}/video/${videoId}`,
         originalUrl: `https://www.tiktok.com/@${username}/video/${videoId}`,
         title,
         author: username
@@ -729,7 +739,10 @@ async function executeBotCommand(commandName, params, interaction) {
       }
 
       // Try free live TikTok search via TikWM (100% free, no API key needed)
-      const liveResult = await searchTikTokFree(search);
+      const searchQuery = (commandName === '67' && !search.toLowerCase().includes('67') && !search.toLowerCase().includes('6-7'))
+        ? `${search} 67 edit`
+        : search;
+      const liveResult = await searchTikTokFree(searchQuery);
       if (liveResult?.url) {
         buttons.push(new ButtonBuilder().setLabel('Original Link 📱').setStyle(ButtonStyle.Link).setURL(liveResult.originalUrl));
         return {
@@ -763,7 +776,12 @@ async function executeBotCommand(commandName, params, interaction) {
     }
 
     // Priority 3: Random pick from MEME_LINKS
-    const validLinks = MEME_LINKS.map((l) => (typeof l === 'string' ? l.split(/\s+/)[0] : '')).filter((l) => l.startsWith('http'));
+    let pool = MEME_LINKS;
+    if (commandName === '67') {
+      const filtered67 = MEME_LINKS.filter((l) => typeof l === 'string' && (l.toLowerCase().includes('67') || l.toLowerCase().includes('6-7')));
+      if (filtered67.length > 0) pool = filtered67;
+    }
+    const validLinks = pool.map((l) => (typeof l === 'string' ? l.split(/\s+/)[0] : '')).filter((l) => l.startsWith('http'));
     if (validLinks.length > 0) {
       const rawLink = validLinks[Math.floor(Math.random() * validLinks.length)];
       const embedUrl = formatSocialEmbed(rawLink);
