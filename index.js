@@ -29,25 +29,13 @@ const client = new Client({
 // ==========================================
 // 📋 YOUR CUSTOM MEMES & 6-7 EDITS LIST
 // Paste ANY TikTok, Twitter (X), or video/GIF links here!
-// The bot automatically fixes them with vxtiktok/vxtwitter so Discord embeds them!
+// You can also add hashtags/notes next to links (e.g. 'https://... #67 #skrilla')
 // ==========================================
 const MEME_LINKS = [
-  'https://www.tiktok.com/t/ZTPpmjPGA/'
-  'https://www.tiktok.com/t/ZPNSgLAAA/'
-'https://www.tiktok.com/t/ZTPpmjPGA/'
-'https://www.tiktok.com/t/ZPNSgHcun/'
-'https://www.tiktok.com/t/ZPNSgWcqC/'
-'https://www.tiktok.com/t/ZPNSgajWw/'
-'https://www.tiktok.com/t/ZTPpmXkDF/'
-'https://www.tiktok.com/t/ZPNSgKS7o/'
-'https://www.tiktok.com/t/ZPNSprJRo/'
-'https://www.tiktok.com/t/ZPNSphy9y/'
-'https://www.tiktok.com/t/ZPNSp2qjP/'
-'https://www.tiktok.com/t/ZTPpmT4dH/'
-  
-  // Just paste new links below like this:
-  // 'https://x.com/username/status/1234567890',
-  // 'https://www.tiktok.com/@user/video/1234567890',
+  'https://www.tiktok.com/t/ZTPpmjPGA/ #67 #edit #skrilla'
+  // Paste more links below anytime:
+  // 'https://x.com/username/status/1234567890 #meme',
+  // 'https://www.tiktok.com/@user/video/1234567890 #funny',
 ];
 
 const OWNER_ID = '1416390397881749514';
@@ -118,7 +106,7 @@ function recordAffection(fromId, toId) {
 
 // Convert TikTok and Twitter/X links into playable video embed proxies
 function formatSocialEmbed(rawUrl) {
-  const trimmed = (rawUrl || '').trim();
+  const trimmed = (rawUrl || '').split(/\s+/)[0];
   if (trimmed.includes('tiktok.com')) {
     return trimmed.replace(/(?:https?:\/\/)?(?:www\.)?tiktok\.com/, 'https://www.vxtiktok.com');
   }
@@ -129,6 +117,36 @@ function formatSocialEmbed(rawUrl) {
     return trimmed.replace(/(?:https?:\/\/)?(?:www\.)?twitter\.com/, 'https://vxtwitter.com');
   }
   return trimmed;
+}
+
+// 100% Free Live TikTok search endpoint (no API key needed!)
+async function searchTikTokFree(keywords) {
+  try {
+    const encoded = encodeURIComponent(keywords.trim());
+    const res = await fetch(`https://www.tikwm.com/api/feed/search?keywords=${encoded}&count=12`, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const videos = json?.data?.videos || json?.data || json?.videos || [];
+    if (!Array.isArray(videos) || !videos.length) return null;
+
+    const picked = videos[Math.floor(Math.random() * Math.min(videos.length, 10))];
+    const username = picked.author?.unique_id || picked.author?.nickname || 'tiktok';
+    const videoId = picked.video_id || picked.id;
+    const title = picked.title || keywords;
+
+    if (videoId) {
+      return {
+        url: `https://www.vxtiktok.com/@${username}/video/${videoId}`,
+        originalUrl: `https://www.tiktok.com/@${username}/video/${videoId}`,
+        title,
+        author: username
+      };
+    }
+  } catch {}
+  return null;
 }
 
 const PURRBOT_MAP = {
@@ -541,8 +559,13 @@ function getCommandDefinitions(forEverywhere = true) {
     new SlashCommandBuilder().setName('purr').setDescription('Curl up and purr softly!').addUserOption((o) => o.setName('cutie').setDescription('Optional: purr for who?').setRequired(false)),
     new SlashCommandBuilder().setName('howl').setDescription('Let out a cute wolf howl awooo~').addUserOption((o) => o.setName('cutie').setDescription('Optional: howl with who?').setRequired(false)),
 
-    new SlashCommandBuilder().setName('memes').setDescription('Drop a TikTok, Twitter (X), or 6-7 meme edit! 🔥').addUserOption((o) => o.setName('cutie').setDescription('Optional cutie to share with :3').setRequired(false)),
-    new SlashCommandBuilder().setName('67').setDescription('Drop a legendary 6-7 edit! 🏀🔥').addUserOption((o) => o.setName('cutie').setDescription('Optional cutie to flex on :3').setRequired(false)),
+    new SlashCommandBuilder().setName('memes').setDescription('Drop or search a TikTok, Twitter (X), or 6-7 meme edit! 🔥')
+      .addStringOption((opt) => opt.setName('search').setDescription('Search keywords (e.g. "67 edit", "skrilla", "funny")').setRequired(false))
+      .addUserOption((o) => o.setName('cutie').setDescription('Optional cutie to share with :3').setRequired(false)),
+
+    new SlashCommandBuilder().setName('67').setDescription('Drop a legendary 6-7 edit! 🏀🔥')
+      .addStringOption((opt) => opt.setName('search').setDescription('Search keywords (e.g. "skrilla", "edit")').setRequired(false))
+      .addUserOption((o) => o.setName('cutie').setDescription('Optional cutie to flex on :3').setRequired(false)),
 
     new SlashCommandBuilder().setName('cutemeter').setDescription('Scan cuteness percentage!').addUserOption((o) => o.setName('cutie').setDescription('Target').setRequired(false)),
     new SlashCommandBuilder().setName('ship').setDescription('Check compatibility between two cuties!')
@@ -668,22 +691,56 @@ async function executeBotCommand(commandName, params, interaction) {
     };
   }
 
-  // Unified Memes & 6-7 Handler: supports TikTok, Twitter (X), MP4, and GIF links!
+  // Unified Memes & 6-7 Handler with 100% Free Live Search & Tag Search!
   if (commandName === 'memes' || commandName === '67') {
     const cutie = params.cutie || null;
+    const search = (params.search || '').trim();
     const pickedQuote = MEME_CAPTIONS[Math.floor(Math.random() * MEME_CAPTIONS.length)];
-    const localMedia = getLocalMemeMedia();
-
     const titlePrefix = commandName === '67' ? 'SIX-SEVEN (6-7) EDIT DROPPED! 🏀🔥' : 'FRESH MEME DROP! 🔥🎬';
-    const desc = cutie
+
+    let desc = cutie
       ? `<@${interaction.user.id}> dropped a meme on <@${cutie.id}>!! 🔥\n\n>>> **${pickedQuote}**\n\n[emolarp.fans](${SITE_URL}) :3`
       : `<@${interaction.user.id}> dropped a fresh meme!! 🔥\n\n>>> **${pickedQuote}**\n\n[emolarp.fans](${SITE_URL}) :3`;
 
+    if (search) {
+      desc = `🔎 *Search query:* \`${search}\`\n\n` + desc;
+    }
+
+    const customIdQuery = search ? search.slice(0, 30) : '';
     const buttons = [
-      new ButtonBuilder().setCustomId(`roll:${commandName}`).setLabel('Roll Another 🔄').setStyle(ButtonStyle.Primary)
+      new ButtonBuilder()
+        .setCustomId(`roll:${commandName}:${customIdQuery}`)
+        .setLabel('Roll Another 🔄')
+        .setStyle(ButtonStyle.Primary)
     ];
 
-    // Priority 1: If there is a local file in GitHub (e.g. edits/67.mp4)
+    // Priority 1: Search query provided
+    if (search) {
+      // Check local curated list for matching tags/hashtags
+      const matched = MEME_LINKS.filter((l) => typeof l === 'string' && l.toLowerCase().includes(search.toLowerCase()));
+      if (matched.length > 0) {
+        const rawLink = matched[Math.floor(Math.random() * matched.length)].split(/\s+/)[0];
+        const embedUrl = formatSocialEmbed(rawLink);
+        buttons.push(new ButtonBuilder().setLabel('Original Link 📱').setStyle(ButtonStyle.Link).setURL(rawLink));
+        return {
+          content: `**${titlePrefix}**\n${desc}\n\n${embedUrl}`,
+          components: [new ActionRowBuilder().addComponents(buttons)]
+        };
+      }
+
+      // Try free live TikTok search via TikWM (100% free, no API key needed)
+      const liveResult = await searchTikTokFree(search);
+      if (liveResult?.url) {
+        buttons.push(new ButtonBuilder().setLabel('Original Link 📱').setStyle(ButtonStyle.Link).setURL(liveResult.originalUrl));
+        return {
+          content: `**${titlePrefix}**\n${desc}\n\n${liveResult.url}`,
+          components: [new ActionRowBuilder().addComponents(buttons)]
+        };
+      }
+    }
+
+    // Priority 2: Check local media file in GitHub
+    const localMedia = getLocalMemeMedia();
     if (localMedia) {
       const row = new ActionRowBuilder().addComponents(buttons);
       const ext = path.extname(localMedia.fileName).toLowerCase();
@@ -705,23 +762,19 @@ async function executeBotCommand(commandName, params, interaction) {
       };
     }
 
-    // Priority 2: Use links from MEME_LINKS (TikTok, Twitter/X, etc.)
-    const validLinks = MEME_LINKS.filter((l) => typeof l === 'string' && l.trim().startsWith('http'));
+    // Priority 3: Random pick from MEME_LINKS
+    const validLinks = MEME_LINKS.map((l) => (typeof l === 'string' ? l.split(/\s+/)[0] : '')).filter((l) => l.startsWith('http'));
     if (validLinks.length > 0) {
       const rawLink = validLinks[Math.floor(Math.random() * validLinks.length)];
       const embedUrl = formatSocialEmbed(rawLink);
-
       buttons.push(new ButtonBuilder().setLabel('Original Link 📱').setStyle(ButtonStyle.Link).setURL(rawLink));
-      const row = new ActionRowBuilder().addComponents(buttons);
-
-      // Sending embedUrl in message content triggers Discord to play the TikTok/Twitter video inline!
       return {
         content: `**${titlePrefix}**\n${desc}\n\n${embedUrl}`,
-        components: [row]
+        components: [new ActionRowBuilder().addComponents(buttons)]
       };
     }
 
-    // Priority 3: Fallback GIF if list is empty
+    // Priority 4: Fallback GIF
     const embed = {
       title: titlePrefix,
       description: desc,
@@ -946,10 +999,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    if (interaction.isButton() && (interaction.customId === 'roll:memes' || interaction.customId === 'roll:67')) {
+    if (interaction.isButton() && (interaction.customId.startsWith('roll:memes') || interaction.customId.startsWith('roll:67'))) {
       await interaction.deferUpdate();
-      const targetCmd = interaction.customId.split(':')[1] || 'memes';
-      const payload = await executeBotCommand(targetCmd, { cutie: null }, interaction);
+      const parts = interaction.customId.split(':');
+      const targetCmd = parts[1] || 'memes';
+      const search = parts.slice(2).join(':') || '';
+      const payload = await executeBotCommand(targetCmd, { cutie: null, search }, interaction);
       return interaction.editReply(payload);
     }
 
@@ -1058,6 +1113,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       cutie: interaction.options.getUser('cutie') || interaction.options.getUser('cutie1') || null,
       cutie2: interaction.options.getUser('cutie2') || null,
       tags: interaction.options.getString('tags') || '',
+      search: interaction.options.getString('search') || '',
       rating: interaction.commandName === 'yiff' ? 'explicit' : (interaction.options.getString('rating') || 'nsfw'),
       order: interaction.options.getString('order') || 'newest',
       species: interaction.options.getString('species') || 'neko',
